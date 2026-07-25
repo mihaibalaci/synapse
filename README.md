@@ -1,6 +1,6 @@
 # Recall
 
-**The memory layer for engineering teams.**
+**The memory layer for AI first engineering teams.**
 
 AI context, stored. Knowledge, recalled.
 
