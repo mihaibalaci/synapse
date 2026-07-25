@@ -1,0 +1,231 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Recall — Default Helm Values
+#
+# Override with profile-specific values:
+#   helm install ctx ./deploy/helm/recall -f deploy/helm/recall/profiles/on-prem.yaml
+# ══════════════════════════════════════════════════════════════════════════════
+
+global:
+  # Deployment profile: cloud-aws | cloud-gcp | on-prem | hybrid
+  profile: "on-prem"
+  # Container registry
+  imageRegistry: ""
+  imagePullSecrets: []
+  # Domain for ingress
+  domain: "ctx.internal.company.com"
+
+# ─── API Service ──────────────────────────────────────────────────────────────
+
+api:
+  replicaCount: 3
+  image:
+    repository: recall/api
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  port: 3000
+  env:
+    NODE_ENV: production
+    LOG_LEVEL: info
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPU: 70
+    targetMemory: 80
+  service:
+    type: ClusterIP
+    port: 80
+  ingress:
+    enabled: true
+    className: nginx
+    annotations: {}
+    tls:
+      enabled: true
+      secretName: ctx-tls
+
+# ─── Worker Service ───────────────────────────────────────────────────────────
+
+worker:
+  replicaCount: 5
+  image:
+    repository: recall/worker
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  env:
+    QUEUE_CONCURRENCY: "10"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 30
+    # Scale on Redis queue depth via KEDA or custom metrics
+    targetQueueDepth: 1000
+
+# ─── PostgreSQL ───────────────────────────────────────────────────────────────
+
+postgresql:
+  # "managed" = use external managed service (Aurora, Cloud SQL, etc.)
+  # "internal" = deploy Postgres inside the cluster (via Patroni)
+  mode: "internal"
+  # Connection details (used when mode=managed OR as internal defaults)
+  host: ""
+  port: 5432
+  database: recall
+  username: postgres
+  password: ""
+  existingSecret: ""
+  existingSecretKey: "password"
+  # Internal (Patroni) settings
+  internal:
+    replicas: 3
+    storage: 100Gi
+    storageClass: ""
+    resources:
+      requests:
+        cpu: 1000m
+        memory: 4Gi
+      limits:
+        cpu: 4000m
+        memory: 16Gi
+    # pgvector + AGE extensions are installed via init container
+    extensions:
+      - vector
+      - pg_trgm
+      - "uuid-ossp"
+
+# ─── Redis ────────────────────────────────────────────────────────────────────
+
+redis:
+  # "managed" = use external (ElastiCache, Memorystore, etc.)
+  # "internal" = deploy Redis inside the cluster
+  mode: "internal"
+  host: ""
+  port: 6379
+  password: ""
+  existingSecret: ""
+  internal:
+    replicas: 3
+    storage: 10Gi
+    storageClass: ""
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+
+# ─── Object Storage ──────────────────────────────────────────────────────────
+
+objectStorage:
+  # "s3" | "gcs" | "minio" | "ceph"
+  provider: "minio"
+  bucket: "recall-raw"
+  region: "us-east-1"
+  endpoint: ""  # For MinIO/Ceph: http://minio:9000
+  accessKey: ""
+  secretKey: ""
+  existingSecret: ""
+  # Deploy internal MinIO (for on-prem / dev)
+  minio:
+    enabled: true
+    replicas: 4
+    storage: 500Gi
+    storageClass: ""
+
+# ─── Embedding Model ─────────────────────────────────────────────────────────
+
+embedding:
+  # "openai" | "ollama" | "vllm" | "tei" | "local"
+  provider: "ollama"
+  # For openai:
+  openai:
+    apiKey: ""
+    model: "text-embedding-3-small"
+    dimensions: 1536
+  # For self-hosted (ollama, vllm, tei):
+  selfHosted:
+    url: "http://embedding-server:8080"
+    model: "nomic-embed-text"
+    dimensions: 768
+    # Deploy embedding server inside cluster
+    deploy: true
+    image: "ghcr.io/huggingface/text-embeddings-inference:latest"
+    model_id: "nomic-ai/nomic-embed-text-v1.5"
+    resources:
+      requests:
+        cpu: 2000m
+        memory: 4Gi
+      limits:
+        nvidia.com/gpu: 1
+
+# ─── LLM (for knowledge extraction) ──────────────────────────────────────────
+
+llm:
+  # "claude" | "openai" | "ollama" | "vllm" | "local-none"
+  provider: "ollama"
+  # For cloud providers:
+  apiKey: ""
+  model: ""
+  # For self-hosted:
+  selfHosted:
+    url: "http://llm-server:8080"
+    model: "llama3.1:8b"
+    # Deploy LLM server inside cluster
+    deploy: false
+    image: "ollama/ollama:latest"
+    resources:
+      requests:
+        memory: 8Gi
+      limits:
+        nvidia.com/gpu: 1
+
+# ─── Secrets Management ───────────────────────────────────────────────────────
+
+secrets:
+  # "env" | "vault" | "sealed-secrets" | "external-secrets"
+  provider: "env"
+  vault:
+    address: ""
+    role: ""
+    path: "secret/data/recall"
+  externalSecrets:
+    secretStore: ""
+
+# ─── Observability ────────────────────────────────────────────────────────────
+
+observability:
+  # OpenTelemetry collector
+  otel:
+    enabled: true
+    endpoint: "http://otel-collector:4317"
+  # Prometheus metrics
+  metrics:
+    enabled: true
+    serviceMonitor: true
+  # Distributed tracing
+  tracing:
+    enabled: true
+    samplingRate: 0.1
+
+# ─── Service Mesh ─────────────────────────────────────────────────────────────
+
+serviceMesh:
+  enabled: false
+  # "istio" | "linkerd"
+  type: "istio"
+  mtls:
+    mode: "STRICT"  # STRICT | PERMISSIVE | DISABLE

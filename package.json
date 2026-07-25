@@ -1,0 +1,45 @@
+{
+  "name": "recall",
+  "version": "0.1.0",
+  "description": "Centralized AI session knowledge base for engineering teams",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src/ --ext .ts",
+    "format": "prettier --write src/",
+    "migrate": "node-pg-migrate up",
+    "seed": "tsx src/scripts/seed.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.0",
+    "@fastify/rate-limit": "^9.0.0",
+    "@fastify/swagger": "^8.0.0",
+    "@neondatabase/serverless": "^0.9.0",
+    "bullmq": "^5.0.0",
+    "fastify": "^4.28.0",
+    "ioredis": "^5.4.0",
+    "neo4j-driver": "^5.20.0",
+    "openai": "^4.50.0",
+    "pg": "^8.12.0",
+    "pino": "^9.0.0",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/pg": "^8.11.0",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.3.0",
+    "tsx": "^4.15.0",
+    "typescript": "^5.5.0",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

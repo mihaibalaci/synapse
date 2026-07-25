@@ -1,0 +1,107 @@
+{{- if .Values.serviceMesh.enabled }}
+{{- if eq .Values.serviceMesh.type "istio" }}
+# ══════════════════════════════════════════════════════════════════════════════
+# Istio Service Mesh Configuration
+# Enables mTLS between all services, traffic policies, and observability.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# PeerAuthentication: enforce mTLS mode across the namespace
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: {{ .Release.Name }}-mtls
+spec:
+  mtls:
+    mode: {{ .Values.serviceMesh.mtls.mode }}
+---
+# DestinationRule: enable mTLS for all internal traffic
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: {{ .Release.Name }}-api-dr
+spec:
+  host: {{ .Release.Name }}-api
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        h2UpgradePolicy: DEFAULT
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 1000
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 30s
+      baseEjectionTime: 60s
+---
+# VirtualService: routing rules + retry policy
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ .Release.Name }}-api-vs
+spec:
+  hosts:
+    - {{ .Release.Name }}-api
+  http:
+    - route:
+        - destination:
+            host: {{ .Release.Name }}-api
+            port:
+              number: {{ .Values.api.service.port }}
+      retries:
+        attempts: 3
+        perTryTimeout: 5s
+        retryOn: 5xx,reset,connect-failure,retriable-4xx
+      timeout: 30s
+---
+# AuthorizationPolicy: restrict who can call internal services
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: {{ .Release.Name }}-worker-policy
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker
+  rules:
+    # Only allow internal traffic (no ingress to workers)
+    - from:
+        - source:
+            principals: ["cluster.local/ns/{{ .Release.Namespace }}/sa/{{ .Release.Name }}-api"]
+---
+# ServiceEntry: allow egress to embedding/LLM providers
+{{- if eq .Values.embedding.provider "openai" }}
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: {{ .Release.Name }}-openai-egress
+spec:
+  hosts:
+    - api.openai.com
+  ports:
+    - number: 443
+      name: https
+      protocol: TLS
+  resolution: DNS
+  location: MESH_EXTERNAL
+{{- end }}
+{{- if eq .Values.llm.provider "claude" }}
+---
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: {{ .Release.Name }}-anthropic-egress
+spec:
+  hosts:
+    - api.anthropic.com
+  ports:
+    - number: 443
+      name: https
+      protocol: TLS
+  resolution: DNS
+  location: MESH_EXTERNAL
+{{- end }}
+{{- end }}
+{{- end }}

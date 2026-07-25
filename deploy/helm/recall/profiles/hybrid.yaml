@@ -1,0 +1,64 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Hybrid Deployment Profile
+#
+# Compute runs on-prem (Kubernetes in your datacenter).
+# Data services are cloud-managed for durability/ops simplicity.
+# Embedding/LLM can be self-hosted (air-gapped) or cloud.
+#
+# Typical setup:
+#   - API + Workers: on-prem K8s (low latency to developers)
+#   - Postgres: Cloud managed (Aurora/Cloud SQL) via VPN/DirectConnect
+#   - Redis: on-prem (latency sensitive)
+#   - S3: Cloud (durability)
+#   - Embedding: on-prem GPU (air-gapped option)
+# ══════════════════════════════════════════════════════════════════════════════
+
+global:
+  profile: "hybrid"
+
+postgresql:
+  mode: "managed"
+  host: ""  # Cloud DB reachable via VPN
+  port: 5432
+
+redis:
+  mode: "internal"  # On-prem for latency
+  internal:
+    replicas: 3
+
+objectStorage:
+  provider: "s3"
+  bucket: "recall-raw"
+  region: "us-east-1"
+  minio:
+    enabled: false
+
+embedding:
+  # Self-hosted on-prem GPU — no data leaves the network
+  provider: "tei"
+  selfHosted:
+    url: "http://ctx-embedding:8080"
+    model: "nomic-embed-text"
+    dimensions: 768
+    deploy: true
+    image: "ghcr.io/huggingface/text-embeddings-inference:latest"
+    model_id: "nomic-ai/nomic-embed-text-v1.5"
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+
+llm:
+  # Cloud LLM (data classified as non-sensitive exits via API call)
+  provider: "claude"
+  model: "claude-sonnet-4-20250514"
+
+secrets:
+  provider: "vault"
+  vault:
+    address: "https://vault.internal.company.com"
+
+serviceMesh:
+  enabled: true
+  type: "istio"
+  mtls:
+    mode: "STRICT"

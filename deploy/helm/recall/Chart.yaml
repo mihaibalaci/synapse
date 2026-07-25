@@ -1,0 +1,14 @@
+apiVersion: v2
+name: recall
+description: Engineering knowledge base — intelligent memory + continuous capture for AI coding agents
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai
+  - knowledge-base
+  - engineering
+  - memory
+  - retrieval
+maintainers:
+  - name: Platform Team

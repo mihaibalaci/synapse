@@ -1,0 +1,77 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# On-Premises Deployment Profile
+#
+# Everything runs inside the Kubernetes cluster:
+#   - Patroni Postgres cluster (3 nodes)
+#   - Redis cluster (3 nodes)
+#   - MinIO (S3-compatible, 4 nodes)
+#   - Self-hosted embedding (HuggingFace TEI)
+#   - Self-hosted LLM (Ollama) or no LLM (heuristic-only)
+#
+# Usage:
+#   helm install ctx ./deploy/helm/recall -f profiles/on-prem.yaml
+# ══════════════════════════════════════════════════════════════════════════════
+
+global:
+  profile: "on-prem"
+
+postgresql:
+  mode: "internal"
+  internal:
+    replicas: 3
+    storage: 200Gi
+
+redis:
+  mode: "internal"
+  internal:
+    replicas: 3
+
+objectStorage:
+  provider: "minio"
+  endpoint: "http://ctx-minio:9000"
+  minio:
+    enabled: true
+    replicas: 4
+    storage: 1Ti
+
+embedding:
+  provider: "tei"
+  selfHosted:
+    url: "http://ctx-embedding:8080"
+    model: "nomic-embed-text"
+    dimensions: 768
+    deploy: true
+    image: "ghcr.io/huggingface/text-embeddings-inference:cpu-latest"
+    model_id: "nomic-ai/nomic-embed-text-v1.5"
+    resources:
+      requests:
+        cpu: 4000m
+        memory: 4Gi
+      limits:
+        cpu: 8000m
+        memory: 8Gi
+
+llm:
+  provider: "ollama"
+  selfHosted:
+    url: "http://ctx-ollama:11434"
+    model: "llama3.1:8b"
+    deploy: true
+    resources:
+      requests:
+        memory: 16Gi
+      limits:
+        nvidia.com/gpu: 1
+
+secrets:
+  provider: "vault"
+  vault:
+    address: "https://vault.internal.company.com"
+    role: "recall"
+    path: "secret/data/recall"
+
+serviceMesh:
+  enabled: true
+  type: "istio"
+  mtls:
+    mode: "STRICT"

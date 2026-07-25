@@ -1,0 +1,160 @@
+##
+## Recall — Local Development Environment
+##
+## Starts all required services for local development:
+##   - PostgreSQL 16 with pgvector extension
+##   - Redis 7 (queue + cache)
+##   - Neo4j 5 (knowledge graph)
+##   - OpenSearch 2.11 (BM25 full-text search)
+##   - MinIO (S3-compatible object storage)
+##
+## Usage:
+##   docker compose up -d          # Start all services
+##   docker compose logs -f redis  # Follow specific service logs
+##   docker compose down -v        # Stop and remove volumes
+##
+## After starting, run the application:
+##   npm run dev                   # Starts API + workers
+##
+
+services:
+  # ─── PostgreSQL + pgvector ────────────────────────────────────────────────
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: recall-postgres
+    environment:
+      POSTGRES_DB: recall
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── Redis 7 ─────────────────────────────────────────────────────────────
+
+  redis:
+    image: redis:7-alpine
+    container_name: recall-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── Neo4j 5 (Knowledge Graph) ───────────────────────────────────────────
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: recall-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/password
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+    ports:
+      - "7474:7474"   # HTTP browser
+      - "7687:7687"   # Bolt protocol
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── OpenSearch 2.11 (BM25 Full-Text Search) ─────────────────────────────
+
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: recall-opensearch
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=Admin_123!
+      - OPENSEARCH_JAVA_OPTS=-Xms256m -Xmx512m
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # ─── OpenSearch Dashboards (Optional UI) ──────────────────────────────────
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.11.0
+    container_name: recall-opensearch-dashboards
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    ports:
+      - "5601:5601"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    profiles:
+      - dashboards   # Only starts with: docker compose --profile dashboards up
+
+  # ─── MinIO (S3-compatible Object Storage) ─────────────────────────────────
+
+  minio:
+    image: minio/minio:latest
+    container_name: recall-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # MinIO bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    container_name: recall-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb local/recall-raw --ignore-existing;
+      mc mb local/recall-exports --ignore-existing;
+      echo 'Buckets created successfully';
+      "
+
+volumes:
+  postgres_data:
+  redis_data:
+  neo4j_data:
+  opensearch_data:
+  minio_data:

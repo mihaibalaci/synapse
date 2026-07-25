@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+infra/cdk/cdk.out/
+infra/cdk/node_modules/
+packages/*/node_modules/
+packages/*/dist/
+packages/dashboard/.next/
+.next/
+coverage/
+*.tsbuildinfo

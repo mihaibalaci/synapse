@@ -1,0 +1,68 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# AWS Cloud Deployment Profile
+#
+# Uses managed services:
+#   - Aurora PostgreSQL (external, pgvector pre-installed)
+#   - ElastiCache Redis (external)
+#   - S3 (native)
+#   - OpenAI embeddings (cloud API)
+#   - Claude LLM (cloud API)
+#
+# Usage:
+#   helm install ctx ./deploy/helm/recall -f profiles/cloud-aws.yaml \
+#     --set postgresql.host=mydb.cluster-xxx.us-east-1.rds.amazonaws.com \
+#     --set redis.host=my-redis.xxx.cache.amazonaws.com
+# ══════════════════════════════════════════════════════════════════════════════
+
+global:
+  profile: "cloud-aws"
+
+postgresql:
+  mode: "managed"
+  host: ""  # Set via --set or secrets
+  port: 5432
+  database: recall
+  existingSecret: "aws-db-credentials"
+  existingSecretKey: "password"
+
+redis:
+  mode: "managed"
+  host: ""  # Set via --set
+  port: 6379
+  existingSecret: "aws-redis-credentials"
+
+objectStorage:
+  provider: "s3"
+  bucket: "recall-raw"
+  region: "us-east-1"
+  # Uses IAM role (IRSA) — no keys needed
+  minio:
+    enabled: false
+
+embedding:
+  provider: "openai"
+  openai:
+    apiKey: ""  # From external secret
+    model: "text-embedding-3-small"
+    dimensions: 1536
+
+llm:
+  provider: "claude"
+  apiKey: ""  # From external secret
+  model: "claude-sonnet-4-20250514"
+
+secrets:
+  provider: "external-secrets"
+  externalSecrets:
+    secretStore: "aws-secrets-manager"
+
+api:
+  ingress:
+    className: "alb"
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internal
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/certificate-arn: ""
+
+serviceMesh:
+  enabled: false  # Use AWS App Mesh or skip

@@ -1,0 +1,57 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# GCP Cloud Deployment Profile
+#
+# Uses managed services:
+#   - Cloud SQL PostgreSQL (with pgvector via AlloyDB or Cloud SQL flags)
+#   - Memorystore Redis
+#   - GCS (S3-compatible via interop)
+#   - Vertex AI embeddings or OpenAI
+#   - Gemini/Claude LLM
+# ══════════════════════════════════════════════════════════════════════════════
+
+global:
+  profile: "cloud-gcp"
+
+postgresql:
+  mode: "managed"
+  host: ""  # Cloud SQL proxy: 127.0.0.1 (sidecar) or private IP
+  port: 5432
+  database: recall
+  existingSecret: "gcp-db-credentials"
+
+redis:
+  mode: "managed"
+  host: ""  # Memorystore private IP
+  port: 6379
+
+objectStorage:
+  provider: "gcs"
+  bucket: "recall-raw"
+  region: "us-central1"
+  endpoint: "https://storage.googleapis.com"
+  minio:
+    enabled: false
+
+embedding:
+  provider: "openai"
+  openai:
+    model: "text-embedding-3-small"
+    dimensions: 1536
+
+llm:
+  provider: "claude"
+  model: "claude-sonnet-4-20250514"
+
+secrets:
+  provider: "external-secrets"
+  externalSecrets:
+    secretStore: "gcp-secret-manager"
+
+api:
+  ingress:
+    className: "gce"
+    annotations:
+      kubernetes.io/ingress.class: "gce-internal"
+
+serviceMesh:
+  enabled: false

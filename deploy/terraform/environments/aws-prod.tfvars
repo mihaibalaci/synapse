@@ -1,0 +1,7 @@
+cloud_provider          = "aws"
+environment             = "prod"
+region                  = "us-east-1"
+kubernetes_cluster_name = "recall-prod"
+postgres_instance_class = "db.r6g.xlarge"
+redis_node_type         = "cache.r7g.large"
+domain                  = "ctx.internal.company.com"

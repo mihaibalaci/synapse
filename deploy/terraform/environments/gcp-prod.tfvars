@@ -1,0 +1,7 @@
+cloud_provider          = "gcp"
+environment             = "prod"
+region                  = "us-central1"
+kubernetes_cluster_name = "recall-prod"
+postgres_instance_class = "db-custom-4-16384"
+redis_node_type         = "STANDARD_HA"
+domain                  = "ctx.internal.company.com"
