@@ -4,7 +4,7 @@
 
 AI context, stored. Knowledge, recalled.
 
-A team-scale memory system that continuously captures AI coding sessions from 600+ engineers,
+A company-scale memory system that continuously captures AI coding sessions from 1000+ engineers,
 extracts atomic facts and knowledge, deduplicates across the organization, and provides
 sub-200ms retrieval. Over time, token usage per query *decreases* as the system compacts
 collective knowledge into canonical answers.
