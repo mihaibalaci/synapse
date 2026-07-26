@@ -3,7 +3,7 @@
  * Replies in-thread with knowledge from the store.
  */
 
-import type { AppMentionEvent } from '@slack/bolt';
+import type { AppMentionEvent } from '@slack/types';
 import { api, getOrgId } from '../api-client.js';
 
 export async function handleMention({

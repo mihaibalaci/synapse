@@ -1,47 +1,52 @@
 {{- if .Values.api.autoscaling.enabled }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
-metadata:
-  name: {{ .Release.Name }}-api-hpa
+metadata: { name: {{ .Release.Name }}-api }
 spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: {{ .Release.Name }}-api
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: {{ .Release.Name }}-api }
   minReplicas: {{ .Values.api.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.api.autoscaling.maxReplicas }}
+  behavior:
+    scaleDown: { stabilizationWindowSeconds: 300 }
+    scaleUp: { stabilizationWindowSeconds: 30 }
   metrics:
     - type: Resource
       resource:
         name: cpu
-        target:
-          type: Utilization
-          averageUtilization: {{ .Values.api.autoscaling.targetCPU }}
+        target: { type: Utilization, averageUtilization: {{ .Values.api.autoscaling.targetCPU }} }
     - type: Resource
       resource:
         name: memory
-        target:
-          type: Utilization
-          averageUtilization: {{ .Values.api.autoscaling.targetMemory }}
+        target: { type: Utilization, averageUtilization: {{ .Values.api.autoscaling.targetMemory }} }
 {{- end }}
+{{- if and .Values.api.autoscaling.enabled .Values.worker.autoscaling.enabled }}
 ---
+{{- end }}
 {{- if .Values.worker.autoscaling.enabled }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
-metadata:
-  name: {{ .Release.Name }}-worker-hpa
+metadata: { name: {{ .Release.Name }}-worker }
 spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: {{ .Release.Name }}-worker
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: {{ .Release.Name }}-worker }
   minReplicas: {{ .Values.worker.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.worker.autoscaling.maxReplicas }}
+  behavior:
+    scaleDown: { stabilizationWindowSeconds: 600 }
+    scaleUp: { stabilizationWindowSeconds: 30 }
   metrics:
+    {{- if .Values.worker.autoscaling.queueMetric.enabled }}
+    - type: External
+      external:
+        metric:
+          name: {{ .Values.worker.autoscaling.queueMetric.name }}
+          {{- with .Values.worker.autoscaling.queueMetric.selector }}
+          selector: {{ toYaml . | nindent 12 }}
+          {{- end }}
+        target: { type: AverageValue, averageValue: {{ .Values.worker.autoscaling.targetQueueDepth | quote }} }
+    {{- else }}
     - type: Resource
       resource:
         name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 80
+        target: { type: Utilization, averageUtilization: {{ .Values.worker.autoscaling.targetCPU }} }
+    {{- end }}
 {{- end }}

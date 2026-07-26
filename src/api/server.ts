@@ -18,6 +18,12 @@ import { registerUploadRoutes } from './upload.js';
 import { registerRetrievalRoutes } from './retrieval-routes.js';
 import { registerFeedbackRoutes } from './feedback-routes.js';
 import { registerCaptureRoutes } from './capture-routes.js';
+import { registerAuthentication } from './auth.js';
+import { registerFactRoutes } from './fact-routes.js';
+import { checkDatabaseHealth } from '../storage/database.js';
+import { checkCacheHealth } from '../storage/cache.js';
+import { ObjectStorageClient } from '../storage/object-storage.js';
+import { getQueueHealth } from '../ingestion/queue.js';
 
 export async function createServer(): Promise<FastifyInstance> {
   const config = getConfig();
@@ -35,17 +41,16 @@ export async function createServer(): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: true, // Allow all origins (IDE plugins)
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Organization-ID'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
     credentials: true,
   });
+
+  await registerAuthentication(app);
 
   await app.register(rateLimit, {
     max: config.RATE_LIMIT_MAX,
     timeWindow: config.RATE_LIMIT_WINDOW_MS,
-    keyGenerator: (request) => {
-      // Rate limit per developer (from auth token)
-      return request.headers['x-developer-id'] as string ?? request.ip;
-    },
+    keyGenerator: request => request.authContext?.userId ?? request.ip,
   });
 
   // ─── Request Hooks ───────────────────────────────────────────────────────
@@ -76,17 +81,23 @@ export async function createServer(): Promise<FastifyInstance> {
     version: process.env.npm_package_version ?? '0.1.0',
   }));
 
-  app.get('/health/ready', async () => {
-    // TODO: Check DB, Redis, S3 connectivity
-    return {
-      status: 'ready',
+  app.get('/health/ready', async (_request, reply) => {
+    const [database, redis, objectStorage, queueResult] = await Promise.all([
+      checkDatabaseHealth(),
+      checkCacheHealth(),
+      new ObjectStorageClient().checkBucket(config.S3_BUCKET),
+      getQueueHealth().then(() => ({ healthy: true })).catch(() => ({ healthy: false })),
+    ]);
+    const ready = database.healthy && redis.healthy && objectStorage.healthy && queueResult.healthy;
+    return reply.status(ready ? 200 : 503).send({
+      status: ready ? 'ready' : 'not_ready',
       checks: {
-        database: 'ok',
-        redis: 'ok',
-        objectStorage: 'ok',
-        queue: 'ok',
+        database: database.healthy ? 'ok' : 'unavailable',
+        redis: redis.healthy ? 'ok' : 'unavailable',
+        objectStorage: objectStorage.healthy ? 'ok' : 'unavailable',
+        queue: queueResult.healthy ? 'ok' : 'unavailable',
       },
-    };
+    });
   });
 
   // ─── API Routes ──────────────────────────────────────────────────────────
@@ -94,6 +105,7 @@ export async function createServer(): Promise<FastifyInstance> {
   await registerUploadRoutes(app);
   await registerCaptureRoutes(app);
   await registerRetrievalRoutes(app);
+  await registerFactRoutes(app);
   await registerFeedbackRoutes(app);
 
   // ─── Error Handler ───────────────────────────────────────────────────────
@@ -106,13 +118,14 @@ export async function createServer(): Promise<FastifyInstance> {
       url: request.url,
     }, 'Unhandled error');
 
-    const statusCode = error.statusCode ?? 500;
+    const normalizedError = error as { statusCode?: number; message?: string };
+    const statusCode = normalizedError.statusCode ?? 500;
 
     reply.status(statusCode).send({
       error: statusCode >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR',
       message: statusCode >= 500
         ? 'An unexpected error occurred'
-        : error.message,
+        : normalizedError.message ?? 'Request failed',
       requestId: request.id,
     });
   });

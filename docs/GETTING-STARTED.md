@@ -20,11 +20,22 @@ docker compose -f infra/docker/docker-compose.yml up -d
 cp .env.example .env
 # Edit .env if you want real embeddings (add OPENAI_API_KEY)
 
-# 4. Start the application
-npm run dev
+# 4. Start the API and the workers (separate processes)
+npm run dev          # API
+npm run dev:worker   # workers, in a second terminal
 ```
 
 The API is now running at `http://localhost:3000`.
+
+`docker compose up` already builds and runs the API, worker, and dashboard, so
+steps 3 and 4 are only needed when running the service from source.
+
+Every endpoint except `/health` and `/health/ready` requires a bearer JWT whose
+issuer and audience match `AUTH_ISSUER`/`AUTH_AUDIENCE` and which carries `sub`,
+`organization_id`, `team_ids`, `roles`, and `repository_access`. Identity comes
+from verified claims only; request-body identity fields are ignored.
+`npm run smoke:local` mints a valid local token and exercises the full
+upload-to-search path.
 
 ## Verify It Works
 
@@ -89,11 +100,15 @@ After `docker compose up`, these services are available:
 
 | Service | URL | Purpose |
 |---------|-----|---------|
-| PostgreSQL | `localhost:5432` | Primary database (pgvector + FTS) |
-| Redis | `localhost:6379` | Cache + queue |
-| Neo4j Browser | `http://localhost:7474` | Graph visualization |
-| OpenSearch | `http://localhost:9200` | Full-text search (v1 compat) |
+| PostgreSQL | `localhost:5432` | Vectors, FTS, relational graph, outbox |
+| Redis | `localhost:6379` | BullMQ queues + cache (`noeviction`) |
 | MinIO Console | `http://localhost:9001` | S3 browser (login: minioadmin/minioadmin) |
+| API | `http://localhost:3000` | `/health`, `/health/ready`, `/api/v1/*` |
+| Worker health | `http://localhost:3001/health` | Liveness via dispatch heartbeat |
+| Dashboard | `http://localhost:3100` | Web UI |
+
+There is no Neo4j and no OpenSearch. PostgreSQL FTS/`pg_trgm` and the relational
+`graph_nodes`/`graph_edges` tables replaced both.
 
 ## Project Structure
 
@@ -135,12 +150,18 @@ Key environment variables (see `.env.example` for all):
 ## Development Workflow
 
 ```bash
-npm run dev          # Start API + workers (hot reload)
-npm run build        # Compile TypeScript
-npm run test         # Run tests (vitest)
-npm run lint         # ESLint
-npm run migrate      # Run database migrations
+npm run dev                  # API only (hot reload)
+npm run dev:worker           # All workers (hot reload)
+npm run build                # Compile core + workspaces
+npm run test                 # Run tests (vitest)
+npm run lint                 # ESLint
+npm run migrate              # Apply ordered migrations (advisory-locked, idempotent)
+npm run backfill:embeddings  # Resumable re-embedding backfill
+npm run smoke:local          # Authenticated upload → search proof against Compose
 ```
+
+Migrations never run automatically on startup. Apply them explicitly, or let the
+Helm pre-upgrade Job do it.
 
 ## Consumer Packages
 
@@ -179,7 +200,8 @@ cd deploy/terraform && terraform apply -var-file=environments/aws-prod.tfvars
 
 # GCP
 cd deploy/terraform && terraform apply -var-file=environments/gcp-prod.tfvars
-
-# Legacy AWS (CDK — deprecated)
-cd infra/cdk && npx cdk deploy --all --context stage=dev
 ```
+
+The AWS CDK stacks were removed: they provisioned OpenSearch and pointed at
+Neo4j, neither of which the service uses. Terraform plus Helm is the only
+supported cloud path.

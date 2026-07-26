@@ -4,7 +4,7 @@
  */
 
 import type { SlashCommand, AckFn, RespondFn } from '@slack/bolt';
-import { WebClient } from '@slack/bolt';
+import { WebClient } from '@slack/web-api';
 import { api, getOrgId } from '../api-client.js';
 
 export async function handleSaveCommand({

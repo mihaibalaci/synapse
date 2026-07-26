@@ -2,208 +2,231 @@
 
 ## Service Overview
 
-The Recall runs as two ECS Fargate services:
-- **API** (internet-facing via ALB) — handles uploads, search, feedback
-- **Workers** (internal) — processes ingestion pipeline jobs from Redis queue
+Recall runs as two Kubernetes Deployments (Helm chart `deploy/helm/recall`):
 
-Dependencies: Aurora PostgreSQL, Redis (ElastiCache), S3
+- **API** — uploads, retrieval, facts, feedback. Behind an Ingress.
+- **Worker** — pipeline, fact/knowledge/dedup/graph enrichment, search indexing,
+  and the transactional outbox dispatcher. No inbound traffic; health only.
+
+Dependencies: PostgreSQL 16 + pgvector, Redis (`noeviction`), S3-compatible
+object storage. There is no OpenSearch and no Neo4j.
+
+> **Observability gap.** There is no `/metrics` endpoint and no tracing yet, so
+> every check below is manual. Alert thresholds in this document are targets,
+> not implemented alerts.
 
 ---
 
 ## Common Operations
 
-### Check System Health
+### Check health
 
 ```bash
-# API health
-curl https://api.context-store.internal.company.com/health/ready
+# API readiness (503 when any dependency is down)
+kubectl exec deploy/recall-api -- wget -qO- http://127.0.0.1:3000/health/ready
 
-# Queue depth (high = workers can't keep up)
-redis-cli -u $REDIS_URL LLEN bull:session-processing:wait
+# Worker liveness — heartbeatAgeMs proves the dispatch loop is running
+kubectl exec deploy/recall-worker -- wget -qO- http://127.0.0.1:3001/health
+kubectl exec deploy/recall-worker -- wget -qO- http://127.0.0.1:3001/health/ready
 
-# Database connections
-psql $DATABASE_URL -c "SELECT count(*) FROM pg_stat_activity WHERE state = 'active';"
+# Queue depth per queue
+redis-cli -u "$REDIS_URL" LLEN bull:session-processing:wait
+redis-cli -u "$REDIS_URL" LLEN bull:chunk-facts:wait
 
-# Stuck sessions (processing for >30 min)
-psql $DATABASE_URL -c "
-  SELECT id, status, processing_attempts, updated_at
+# Active database connections
+psql "$DATABASE_URL" -c "SELECT count(*) FROM pg_stat_activity WHERE state = 'active';"
+```
+
+### Find stalled work
+
+Searchability and enrichment are tracked independently; `status` is legacy.
+
+```bash
+psql "$DATABASE_URL" -c "
+  SELECT id, searchable_status, enrichment_status, processing_attempts, last_error
   FROM sessions
-  WHERE status NOT IN ('indexed', 'failed')
+  WHERE searchable_status NOT IN ('searchable','blocked')
     AND updated_at < NOW() - INTERVAL '30 minutes'
-  ORDER BY updated_at;
-"
+  ORDER BY updated_at LIMIT 50;"
 ```
 
-### Scale Workers
+### Terminal failures (not alerted — check deliberately)
 
-If queue depth > 5,000 for sustained period:
-```bash
-aws ecs update-service \
-  --cluster recall-prod \
-  --service recall-workers-prod \
-  --desired-count 15
-```
-
-Auto-scaling should handle this, but manual override for spikes.
-
-### Reprocess Failed Sessions
+Outbox events stop retrying after 10 attempts, and per-action rows can end
+`failed`. Nothing drains these automatically, so enrichment silently stays
+incomplete until someone looks.
 
 ```bash
-# Find failed sessions
-psql $DATABASE_URL -c "
-  SELECT id, last_error, processing_attempts
-  FROM sessions
-  WHERE status = 'failed' AND processing_attempts < 5
-  ORDER BY created_at DESC LIMIT 20;
-"
+# Outbox events that gave up
+psql "$DATABASE_URL" -c "
+  SELECT event_type, count(*), max(updated_at) AS latest
+  FROM outbox_events WHERE status = 'failed' GROUP BY event_type;"
 
-# Re-enqueue (set status back to 'uploaded' and they'll be picked up)
-psql $DATABASE_URL -c "
-  UPDATE sessions
-  SET status = 'uploaded', processing_attempts = processing_attempts
-  WHERE status = 'failed'
-    AND processing_attempts < 5
-    AND last_error NOT LIKE '%validation%';
-"
+# Chunk actions that gave up
+psql "$DATABASE_URL" -c "
+  SELECT action, count(*) FROM chunk_processing_status
+  WHERE status = 'failed' GROUP BY action;"
 ```
 
-### Clear Cache (after major changes)
+To retry after fixing the root cause, return events to `pending`. This is safe:
+publication is idempotent via `deduplication_key`, and workers claim per action.
 
 ```bash
-# Invalidate all search cache for an org
-redis-cli -u $REDIS_URL KEYS "search:org-456:*" | xargs redis-cli -u $REDIS_URL DEL
-
-# Flush all cache (nuclear option)
-redis-cli -u $REDIS_URL FLUSHDB
+psql "$DATABASE_URL" -c "
+  UPDATE outbox_events
+  SET status = 'pending', available_at = NOW(), attempts = 0, updated_at = NOW()
+  WHERE status = 'failed' AND event_type = 'chunk.facts';"
 ```
+
+### Reprocess failed sessions
+
+Session identity is deterministic (UUIDv5 over org/developer/client id) and
+chunk/fact ids are derived, so replay is idempotent rather than duplicating.
+
+```bash
+psql "$DATABASE_URL" -c "
+  UPDATE sessions SET searchable_status = 'pending', last_error = NULL, updated_at = NOW()
+  WHERE searchable_status = 'failed' AND processing_attempts < 5;"
+```
+
+Then re-emit the outbox event for those sessions (`event_type='session.process'`)
+as shown above.
+
+### Scale workers
+
+```bash
+kubectl scale deployment/recall-worker --replicas=15
+```
+
+HPA handles steady state. By default it scales on CPU; set
+`worker.autoscaling.queueMetric.enabled=true` with a queue-depth external metric
+for load-proportional scaling.
+
+### Clear cache
+
+Cache keys are SHA-256 digests over the full request and ACL context, so they
+cannot be pattern-matched by organization. Invalidation uses `SCAN` + `UNLINK`
+inside the application.
+
+```bash
+# Prefer the application path. If you must intervene manually, use SCAN —
+# never KEYS (blocks the server) and never FLUSHDB (destroys queue state).
+redis-cli -u "$REDIS_URL" --scan --pattern 'search:*' | \
+  xargs -r -n 500 redis-cli -u "$REDIS_URL" UNLINK
+```
+
+> `FLUSHDB` would delete BullMQ queues and in-flight jobs. Do not run it.
 
 ---
 
-## Monitoring & Alerts
+## Monitoring targets
 
-### Key Metrics
-
-| Metric | Healthy | Warning | Critical |
+| Signal | Healthy | Warning | Critical |
 |--------|---------|---------|----------|
 | API p99 latency | < 200ms | > 500ms | > 2s |
 | Queue depth | < 1,000 | > 5,000 | > 20,000 |
+| Redis memory used | < 60% | > 75% | > 90% |
 | DB connections | < 80% pool | > 90% pool | Pool exhausted |
-| Error rate (5xx) | < 0.1% | > 1% | > 5% |
-| Disk (Postgres) | < 70% | > 85% | > 95% |
+| 5xx rate | < 0.1% | > 1% | > 5% |
+| Worker `heartbeatAgeMs` | < 5s | > 30s | > 60s (probe restarts pod) |
+| Failed outbox events | 0 | any sustained | growing |
 
-### Alert Response
+**Redis memory is a hard outage risk.** With `noeviction`, reaching `maxmemory`
+makes writes fail rather than evicting. There is no ingestion admission control
+yet, so a sustained upload burst can cause this. Watch memory, and scale Redis
+before it saturates.
 
-**High queue depth:**
-1. Check worker logs for errors
-2. Check if embedding API is rate-limited (OpenAI 429s)
-3. Scale workers if healthy but slow
-4. If embedding API is down, pause queue (workers will retry on resume)
+### Alert response
+
+**High queue depth:** check worker logs; check whether the embedding provider is
+rate-limiting (429s); scale workers; verify `heartbeatAgeMs` is fresh.
 
 **High API latency:**
-1. Check Postgres: `SELECT * FROM pg_stat_activity WHERE wait_event IS NOT NULL;`
-2. Check for lock contention or long-running queries
-3. Check vector index health: `SELECT * FROM pg_stat_user_indexes WHERE indexrelname LIKE '%hnsw%';`
-4. Check Redis: `redis-cli -u $REDIS_URL INFO memory`
+```sql
+SELECT pid, now() - query_start AS duration, query FROM pg_stat_activity
+WHERE state <> 'idle' AND now() - query_start > interval '5 seconds';
+SELECT indexrelname, idx_scan FROM pg_stat_user_indexes
+WHERE indexrelname LIKE '%hnsw%';
+```
 
-**Database storage growing fast:**
-1. Check for un-archived chunks: `SELECT confidence, count(*) FROM chunks GROUP BY confidence;`
-2. Run monthly pruning job manually
-3. Check if dedup is working: clusters should be forming
+**Worker unhealthy:** a stale heartbeat means the event loop is blocked or
+PostgreSQL is unreachable. Kubernetes restarts the pod; confirm the database is
+healthy before assuming a code hang.
 
 ---
 
-## Maintenance Jobs
+## Maintenance
 
-### Weekly: Knowledge Compaction
+### Re-embedding after a model or version change
 
-Synthesizes cluster canonical articles. Reduces token usage over time.
 ```bash
-# Trigger manually (normally runs via cron)
-curl -X POST http://localhost:3000/internal/jobs/compaction \
-  -H "X-Internal-Key: $INTERNAL_KEY" \
-  -d '{"organizationId": "org-456"}'
+EMBEDDING_VERSION=2 BACKFILL_BATCH_SIZE=50 \
+  MIGRATION_DATABASE_URL="$DATABASE_URL" npm run backfill:embeddings
 ```
 
-### Monthly: Pruning
+Resumable, advisory-locked, and batched per transaction. Re-running continues
+where it stopped. Or run the Helm Job with
+`embeddingBackfill.enabled=true` and `embeddingBackfill.targetVersion=2`.
 
-Archives unused low-quality chunks.
-```bash
-curl -X POST http://localhost:3000/internal/jobs/pruning \
-  -H "X-Internal-Key: $INTERNAL_KEY" \
-  -d '{"organizationId": "org-456"}'
-```
+There is no worker that picks up chunks by `embedding_version` on its own; the
+backfill is the mechanism.
 
-### On-demand: Re-embedding
+### Compaction and pruning
 
-When embedding model is upgraded, re-embed all chunks in background.
-```bash
-# Queue re-embedding for all active chunks (runs at low priority)
-psql $DATABASE_URL -c "
-  UPDATE chunks SET embedding_version = 0
-  WHERE embedding_version < 2 AND confidence != 'archived';
-"
-# Worker picks up chunks with outdated embedding_version
-```
+`CompactionEngine` exists but `runMonthlyPruning` and `getCompactionMetrics` are
+not implemented, and there are **no** internal HTTP job endpoints. Do not expect
+`/internal/jobs/*` to exist. Weekly compaction is invocable only in-process.
 
 ---
 
-## Disaster Recovery
+## Disaster recovery
 
-### Aurora Failover (automatic)
-- Multi-AZ enabled; failover takes <30 seconds
-- Application reconnects automatically via Aurora endpoint
+Current, honest state:
 
-### Redis Failure
-- BullMQ jobs survive Redis restart (persistence enabled)
-- Search cache is ephemeral — no data loss, just cold start latency
+| Scenario | Status |
+|----------|--------|
+| Managed PostgreSQL failover (AWS/GCP) | Provider-automatic; app reconnects via pool. Not drilled. |
+| Patroni failover (on-prem) | Configured with strict synchronous replication. **Never exercised.** |
+| PostgreSQL restore | pgBackRest configured for WAL archive/restore, but **no repository is set by default** and no restore has been performed. RPO/RTO are undefined until drilled. |
+| Redis loss | Queue state is lost unless persistence/snapshots are configured. Raw sessions in object storage remain, so work can be re-driven from the outbox. Cache loss is harmless. |
+| Object storage loss | Bucket is versioned and private. Cross-region replication is **not** provisioned. |
+| Region failure | No DR region, no replica promotion, and no DNS failover are provisioned. |
 
-### S3 Data Loss (extremely unlikely)
-- Versioned bucket with Cross-Region Replication
-- If needed: raw sessions can be reprocessed to rebuild all chunks/knowledge
-
-### Full Region Failure
-1. Promote Aurora read replica in us-west-2
-2. Update DNS to point to DR ALB
-3. Deploy workers to DR region
-4. S3 CRR ensures raw data is available
-5. Redis: restore from latest snapshot (jobs will re-enqueue)
+Because raw session payloads are immutable and stored with hash verification,
+chunks, facts, and knowledge can be rebuilt by replaying sessions. That is the
+real recovery story; treat everything above as unproven until drilled.
 
 ---
 
 ## Troubleshooting
 
-### "Search returns no results"
-1. Confirm chunks exist: `SELECT count(*) FROM chunks WHERE organization_id = 'org-456';`
-2. Confirm embeddings exist: `SELECT count(*) FROM chunks WHERE embedding IS NOT NULL;`
-3. Check if search vector is populated: `SELECT id FROM chunks WHERE search_vector IS NULL LIMIT 5;`
-4. Test vector search directly: run a raw pgvector query
-
-### "Sessions stuck in 'parsing' status"
-1. Check worker logs for errors
-2. Check if S3 object exists at `raw_storage_key`
-3. Check if session JSON is valid (malformed upload)
-4. Manually retry: update status to 'uploaded'
-
-### "High embedding costs"
-1. Check `EMBEDDING_PROVIDER` — should be `text-embedding-3-small` for indexing
-2. Check batch sizes (should be 100 per API call)
-3. Check for re-embedding loops (embedding_version constantly resetting)
-
-### "Postgres slow queries"
+### Search returns no results
 ```sql
--- Find slow queries
-SELECT pid, now() - pg_stat_activity.query_start AS duration, query
-FROM pg_stat_activity
-WHERE state != 'idle' AND now() - pg_stat_activity.query_start > interval '5 seconds';
+SELECT count(*) FROM chunks WHERE organization_id = 'org-id';
+SELECT count(*) FROM chunks WHERE embedding IS NULL;
+SELECT count(*) FROM search_index_entries WHERE organization_id = 'org-id' AND is_searchable;
+SELECT searchable_status, count(*) FROM chunks GROUP BY searchable_status;
+```
+`blocked` means governance classified the content as restricted: it is retained
+redacted and owner-only, without embeddings, indexing, or enrichment. That is
+intended, not a failure.
 
--- Check index usage
-SELECT indexrelname, idx_scan, idx_tup_read
-FROM pg_stat_user_indexes
-ORDER BY idx_scan DESC LIMIT 20;
+Also confirm the caller's JWT claims grant access. RLS plus application ACL
+filtering will correctly return nothing for chunks the identity cannot see.
 
--- Check table bloat
-SELECT relname, n_dead_tup, last_autovacuum
-FROM pg_stat_user_tables
-WHERE n_dead_tup > 10000
-ORDER BY n_dead_tup DESC;
+### Sessions stuck before `searchable`
+1. Check worker logs and `sessions.last_error`.
+2. Confirm the object exists at `raw_storage_key`.
+3. Check `outbox_events` for a `failed` `session.process` event.
+4. Check `chunk_processing_status` for a stuck `processing` row; leases are
+   reclaimed after 20 seconds.
+
+### High embedding cost
+Confirm `EMBEDDING_MODEL`, batch sizes (100 for OpenAI, 32 otherwise), and that
+no backfill is looping. `EMBEDDING_DIMENSIONS` must be 1536.
+
+### PostgreSQL slow or bloated
+```sql
+SELECT relname, n_dead_tup, last_autovacuum FROM pg_stat_user_tables
+WHERE n_dead_tup > 10000 ORDER BY n_dead_tup DESC;
 ```

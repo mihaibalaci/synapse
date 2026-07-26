@@ -1,57 +1,22 @@
-# ══════════════════════════════════════════════════════════════════════════════
-# GCP Cloud Deployment Profile
-#
-# Uses managed services:
-#   - Cloud SQL PostgreSQL (with pgvector via AlloyDB or Cloud SQL flags)
-#   - Memorystore Redis
-#   - GCS (S3-compatible via interop)
-#   - Vertex AI embeddings or OpenAI
-#   - Gemini/Claude LLM
-# ══════════════════════════════════════════════════════════════════════════════
-
 global:
-  profile: "cloud-gcp"
-
-postgresql:
-  mode: "managed"
-  host: ""  # Cloud SQL proxy: 127.0.0.1 (sidecar) or private IP
-  port: 5432
-  database: recall
-  existingSecret: "gcp-db-credentials"
-
-redis:
-  mode: "managed"
-  host: ""  # Memorystore private IP
-  port: 6379
-
-objectStorage:
-  provider: "gcs"
-  bucket: "recall-raw"
-  region: "us-central1"
-  endpoint: "https://storage.googleapis.com"
-  minio:
-    enabled: false
-
+  profile: cloud-gcp
+postgresql: { mode: managed, host: "cloudsql.private.example", port: 5432, database: recall }
+redis: { mode: managed, host: "memorystore.private.example", port: 6379, tls: true }
+# Recall uses the S3 API; GCS deployments require HMAC interoperability keys
+# in the runtime secret until a native GCS object-storage adapter is added.
+objectStorage: { provider: gcs-s3-interop, bucket: recall-raw-prod, region: us-central1, endpoint: "https://storage.googleapis.com" }
 embedding:
-  provider: "openai"
-  openai:
-    model: "text-embedding-3-small"
-    dimensions: 1536
-
-llm:
-  provider: "claude"
-  model: "claude-sonnet-4-20250514"
-
+  provider: openai
+  openai: { model: text-embedding-3-small, dimensions: 1536 }
+llm: { provider: claude, model: claude-sonnet-4-20250514, selfHosted: { url: "", model: "" } }
+auth: { issuer: "https://auth.example.com", audience: recall }
+runtimeSecret: { name: recall-runtime }
 secrets:
-  provider: "external-secrets"
-  externalSecrets:
-    secretStore: "gcp-secret-manager"
-
+  provider: external-secrets
+  externalSecrets: { secretStore: gcp-secret-manager, secretStoreKind: ClusterSecretStore, remoteKey: recall-prod-runtime, refreshInterval: 1h }
+migration: { enabled: true, secretName: recall-migrator, secretKey: DATABASE_URL, backoffLimit: 3 }
 api:
   ingress:
-    className: "gce"
-    annotations:
-      kubernetes.io/ingress.class: "gce-internal"
-
-serviceMesh:
-  enabled: false
+    className: gce
+    annotations: { kubernetes.io/ingress.class: gce-internal }
+serviceMesh: { enabled: false, type: istio, mtls: { mode: STRICT } }

@@ -22,7 +22,7 @@ const logger = createChildLogger({ module: 'permission-filter' });
 
 // ─── Permission Context ──────────────────────────────────────────────────────
 
-interface PermissionContext {
+export interface PermissionContext {
   userId: string;
   organizationId: string;
   teamIds?: string[];
@@ -63,28 +63,37 @@ export class PermissionFilter {
    * Check if a user has access to a specific chunk.
    */
   private checkAccess(chunk: Chunk, context: PermissionContext): boolean {
-    // Rule 1: Must be in the same organization (hard boundary)
-    if (chunk.organizationId !== context.organizationId) {
-      return false;
-    }
+    if (chunk.organizationId !== context.organizationId) return false;
+    if (context.roles?.includes('admin')) return true;
+    if (chunk.authorId === context.userId) return true;
 
-    // Rule 2: Owner always has access
-    if (chunk.authorId === context.userId) {
+    const acl = chunk.acl;
+    if (!acl) {
+      if (chunk.teamId && !context.teamIds?.includes(chunk.teamId)) return false;
+      if (chunk.repository && context.repositoryAccess?.length
+        && !context.repositoryAccess.includes(chunk.repository)) return false;
       return true;
     }
 
-    // Rule 3: Check confidence level — archived chunks with low quality
-    // are still accessible but won't typically appear (handled by ranking)
+    if (acl.organizationId !== context.organizationId || !acl.discoverable) return false;
+    const explicitGrant = acl.sharedWith.some(grant => grant.userId === context.userId);
+    if (explicitGrant) return true;
 
-    // Rule 4: For now, all chunks within an org are visible
-    // In production, this would check:
-    //   - chunk.teamId matches user's team
-    //   - chunk.repository is accessible to user
-    //   - explicit ACL grants
-    //   - security classification
+    const teamMatch = acl.teamIds.length === 0
+      || acl.teamIds.some(teamId => context.teamIds?.includes(teamId));
+    const repositoryMatch = acl.repositoryIds.length === 0
+      || acl.repositoryIds.some(repository => context.repositoryAccess?.includes(repository));
 
-    // Simplified org-level access (most common case)
-    return true;
+    switch (acl.classification) {
+      case 'public':
+        return true;
+      case 'internal':
+        return teamMatch && repositoryMatch;
+      case 'confidential':
+        return Boolean(context.roles?.includes('team_lead') && teamMatch && repositoryMatch);
+      case 'restricted':
+        return false;
+    }
   }
 
   /**

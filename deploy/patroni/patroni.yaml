@@ -1,113 +1,103 @@
-# ══════════════════════════════════════════════════════════════════════════════
-# Patroni Configuration — PostgreSQL HA for On-Premises Deployment
-#
-# Patroni manages a 3-node Postgres cluster with:
-#   - Automatic leader election via DCS (etcd/Kubernetes)
-#   - Synchronous replication (zero data loss)
-#   - Automatic failover (<30s)
-#   - pgvector + pg_trgm extensions pre-installed
-#
-# Deploy via Helm (internal Postgres mode) or standalone on VMs.
-# ══════════════════════════════════════════════════════════════════════════════
-
 scope: recall
-name: ${PATRONI_NAME:-node1}
+name: ${PATRONI_NAME}
 
 restapi:
   listen: 0.0.0.0:8008
-  connect_address: ${POD_IP:-127.0.0.1}:8008
+  connect_address: ${POD_IP}:8008
+  authentication:
+    username: ${PATRONI_REST_USERNAME}
+    password: ${PATRONI_REST_PASSWORD}
+  certfile: ${PATRONI_REST_CERT_FILE}
+  keyfile: ${PATRONI_REST_KEY_FILE}
+  cafile: ${PATRONI_REST_CA_FILE}
+  verify_client: required
 
-# DCS (Distributed Configuration Store)
-# Use Kubernetes endpoints when running in K8s, etcd for bare-metal
 kubernetes:
-  namespace: ${NAMESPACE:-default}
+  namespace: ${PATRONI_NAMESPACE}
   labels:
     app.kubernetes.io/name: recall
     app.kubernetes.io/component: patroni
+  role_label: patroni-role
+  scope_label: patroni-cluster
   use_endpoints: true
-
-# For bare-metal: uncomment etcd, comment out kubernetes
-# etcd3:
-#   hosts:
-#     - etcd1:2379
-#     - etcd2:2379
-#     - etcd3:2379
+  bypass_api_service: true
 
 bootstrap:
   dcs:
     ttl: 30
     loop_wait: 10
     retry_timeout: 10
-    maximum_lag_on_failover: 1048576  # 1MB
+    maximum_lag_on_failover: 1048576
+    maximum_lag_on_syncnode: 1048576
     synchronous_mode: true
-    synchronous_mode_strict: false
-
+    synchronous_mode_strict: true
+    synchronous_node_count: 1
+    failsafe_mode: true
     postgresql:
       use_pg_rewind: true
       use_slots: true
+      remove_data_directory_on_rewind_failure: true
       parameters:
-        # Performance
         max_connections: 200
         shared_buffers: 4GB
         effective_cache_size: 12GB
-        work_mem: 64MB
+        work_mem: 32MB
         maintenance_work_mem: 1GB
         random_page_cost: 1.1
         effective_io_concurrency: 200
-
-        # WAL
+        wal_level: replica
+        wal_compression: "on"
         wal_buffers: 64MB
         min_wal_size: 1GB
-        max_wal_size: 4GB
-        wal_level: replica
-        max_wal_senders: 10
-        max_replication_slots: 10
-
-        # pgvector performance
-        shared_preload_libraries: 'vector,pg_stat_statements'
-        # HNSW build parallelism
+        max_wal_size: 8GB
+        max_wal_senders: 16
+        max_replication_slots: 16
+        archive_mode: "on"
+        archive_command: "pgbackrest --stanza=recall archive-push %p"
+        restore_command: "pgbackrest --stanza=recall archive-get %f %p"
+        archive_timeout: 60s
+        shared_preload_libraries: pg_stat_statements
+        password_encryption: scram-sha-256
+        ssl: "on"
+        ssl_cert_file: ${POSTGRES_TLS_CERT_FILE}
+        ssl_key_file: ${POSTGRES_TLS_KEY_FILE}
+        ssl_ca_file: ${POSTGRES_TLS_CA_FILE}
         max_parallel_maintenance_workers: 4
         max_parallel_workers_per_gather: 4
         max_parallel_workers: 8
-
-        # Logging
         log_min_duration_statement: 1000
-        log_checkpoints: 'on'
-        log_connections: 'on'
-        log_disconnections: 'on'
-
+        log_checkpoints: "on"
+        log_connections: "on"
+        log_disconnections: "on"
   initdb:
     - encoding: UTF8
     - data-checksums
-
-  # Run after cluster initialization
+    - auth-host: scram-sha-256
+    - auth-local: peer
   post_init: /scripts/post-init.sh
-
   pg_hba:
-    - host replication replicator 0.0.0.0/0 md5
-    - host all all 0.0.0.0/0 md5
+    - local all all peer
+    - hostssl replication replicator 10.0.0.0/8 scram-sha-256 clientcert=verify-full
+    - hostssl all all 10.0.0.0/8 scram-sha-256 clientcert=verify-full
 
 postgresql:
   listen: 0.0.0.0:5432
-  connect_address: ${POD_IP:-127.0.0.1}:5432
+  connect_address: ${POD_IP}:5432
   data_dir: /var/lib/postgresql/data
   pgpass: /tmp/pgpass
-
   authentication:
     replication:
       username: replicator
-      password: ${REPLICATOR_PASSWORD:-replicator}
+      password: ${REPLICATOR_PASSWORD}
     superuser:
       username: postgres
-      password: ${POSTGRES_PASSWORD:-postgres}
-
+      password: ${POSTGRES_PASSWORD}
   parameters:
-    unix_socket_directories: '/var/run/postgresql'
-
+    unix_socket_directories: /var/run/postgresql
   pg_hba:
-    - local all all trust
-    - host replication replicator 0.0.0.0/0 md5
-    - host all all 0.0.0.0/0 md5
+    - local all all peer
+    - hostssl replication replicator 10.0.0.0/8 scram-sha-256 clientcert=verify-full
+    - hostssl all all 10.0.0.0/8 scram-sha-256 clientcert=verify-full
 
 tags:
   nofailover: false

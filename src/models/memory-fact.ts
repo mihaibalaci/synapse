@@ -73,9 +73,11 @@ export const MemoryFactSchema = z.object({
   /** Temporal context — when this was true, what supersedes it */
   temporal: TemporalContextSchema,
 
-  /** Source tracing — always link back to full context */
-  sourceChunkId: z.string().uuid(),
-  sourceSessionId: z.string().uuid(),
+  /** Source tracing — link to either a chunk/session or an ambient capture. */
+  sourceChunkId: z.string().uuid().optional(),
+  sourceSessionId: z.string().uuid().optional(),
+  sourceCaptureId: z.string().uuid().optional(),
+  sourceCaptureSequence: z.number().int().nonnegative().optional(),
   sourceMessageIndex: z.number().int().optional(),
 
   /** Who generated this fact */
@@ -154,6 +156,10 @@ export const CaptureEventSchema = z.object({
 
   /** Processing status */
   processed: z.boolean().default(false),
+  processingStatus: z.enum(['pending', 'processing', 'complete', 'blocked', 'failed']).optional(),
+  processingAttempts: z.number().int().nonnegative().optional(),
+  lastError: z.string().optional(),
+  processedAt: z.string().datetime().optional(),
   factIds: z.array(z.string().uuid()).default([]), // Facts extracted from this event
 });
 export type CaptureEvent = z.infer<typeof CaptureEventSchema>;

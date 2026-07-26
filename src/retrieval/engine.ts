@@ -110,11 +110,7 @@ export class RetrievalEngine {
     }, 'Search started');
 
     // 1. Check cache first
-    const cached = await this.searchCache.get(
-      request.query,
-      request.organizationId,
-      request.strategy,
-    );
+    const cached = await this.searchCache.get(request);
     if (cached) {
       return { ...cached, cached: true, latencyMs: Date.now() - startTime };
     }
@@ -145,6 +141,9 @@ export class RetrievalEngine {
     candidates = await this.permissionFilter.filter(candidates, {
       userId: request.developerId,
       organizationId: request.organizationId,
+      teamIds: request.teamIds,
+      roles: request.roles,
+      repositoryAccess: request.repositoryAccess,
     });
 
     // 4. Rank and score
@@ -173,7 +172,7 @@ export class RetrievalEngine {
     };
 
     // 8. Cache the response
-    await this.searchCache.set(request.query, request.organizationId, request.strategy, response);
+    await this.searchCache.set(request, response);
     await this.searchCache.trackQuery(request.query, request.organizationId);
 
     logger.info({
@@ -303,6 +302,7 @@ export class RetrievalEngine {
 
     const expansion = await this.graphRepo.expand({
       seedNodeIds,
+      organizationId: request.organizationId,
       maxDepth: 2,
       targetNodeTypes: ['chunk', 'knowledge'],
       limit: 30,
@@ -406,7 +406,7 @@ export class RetrievalEngine {
     const seenChunks = new Set<string>();
 
     for (const fact of matchingFacts) {
-      if (seenChunks.has(fact.sourceChunkId)) continue;
+      if (!fact.sourceChunkId || seenChunks.has(fact.sourceChunkId)) continue;
       seenChunks.add(fact.sourceChunkId);
 
       const chunk = await this.chunkRepo.findById(fact.sourceChunkId);

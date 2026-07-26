@@ -27,6 +27,9 @@ export class FeedbackProcessor {
    * Record a single feedback event and update chunk metrics.
    */
   async recordFeedback(event: FeedbackEvent): Promise<void> {
+    if (!event.organizationId) {
+      throw new Error('Feedback organization identity is required');
+    }
     // 1. Persist the feedback event
     await this.persistEvent(event);
 
@@ -44,12 +47,23 @@ export class FeedbackProcessor {
    * Persist feedback event to database.
    */
   private async persistEvent(event: FeedbackEvent): Promise<void> {
-    // TODO: Use actual query when DB is wired
-    // await query(
-    //   `INSERT INTO feedback_events (id, search_id, result_id, developer_id, action, comment, conversation_successful, timestamp)
-    //    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    //   [event.id, event.searchId, event.resultId, event.developerId, event.action, event.comment, event.conversationSuccessful, event.timestamp]
-    // );
+    await query(
+      `INSERT INTO feedback_events
+         (id, search_id, result_id, developer_id, organization_id, action,
+          comment, conversation_successful, timestamp)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        event.id,
+        event.searchId,
+        event.resultId,
+        event.developerId,
+        event.organizationId,
+        event.action,
+        event.comment ?? null,
+        event.conversationSuccessful ?? null,
+        event.timestamp,
+      ],
+    );
   }
 
   /**

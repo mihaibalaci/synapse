@@ -48,6 +48,7 @@ export class EmbeddingClient {
     for (let i = 0; i < truncated.length; i += batchSize) {
       const batch = truncated.slice(i, i + batchSize);
       const embeddings = await this.callProvider(batch);
+      this.validateEmbeddings(embeddings, batch.length);
       allEmbeddings.push(...embeddings);
     }
 
@@ -181,6 +182,23 @@ export class EmbeddingClient {
       }
       const norm = Math.sqrt(embedding.reduce((s: number, v: number) => s + v * v, 0));
       return norm > 0 ? embedding.map((v: number) => v / norm) : embedding;
+    });
+  }
+
+  private validateEmbeddings(embeddings: number[][], expectedCount: number): void {
+    if (embeddings.length !== expectedCount) {
+      throw new Error(`Embedding provider returned ${embeddings.length} vectors for ${expectedCount} inputs`);
+    }
+
+    embeddings.forEach((embedding, index) => {
+      if (embedding.length !== this.dimensions) {
+        throw new Error(
+          `Embedding ${index} has ${embedding.length} dimensions; Recall requires ${this.dimensions}`,
+        );
+      }
+      if (!embedding.every(Number.isFinite)) {
+        throw new Error(`Embedding ${index} contains non-finite values`);
+      }
     });
   }
 

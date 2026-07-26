@@ -9,6 +9,8 @@ import { loadConfig } from './config/index.js';
 import { getLogger } from './utils/logger.js';
 import { startServer } from './api/server.js';
 import { closeQueues } from './ingestion/queue.js';
+import { closeCache } from './storage/cache.js';
+import { closeDatabase } from './storage/database.js';
 
 async function main(): Promise<void> {
   // Load and validate config first
@@ -23,29 +25,27 @@ async function main(): Promise<void> {
   // Start HTTP server
   const server = await startServer();
 
-  // Graceful shutdown
-  const shutdown = async (signal: string) => {
+  let shuttingDown = false;
+  const shutdown = async (signal: string, exitCode = 0): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info({ signal }, 'Shutdown signal received');
-
-    // Stop accepting new requests
-    await server.close();
-
-    // Close queue connections
-    await closeQueues();
-
-    // Close DB connections (TODO)
-
-    logger.info('Graceful shutdown complete');
-    process.exit(0);
+    try {
+      await server.close();
+      await Promise.all([closeQueues(), closeCache(), closeDatabase()]);
+      logger.info('Graceful shutdown complete');
+    } catch (error) {
+      logger.error({ err: error }, 'Graceful shutdown failed');
+      exitCode = 1;
+    }
+    process.exitCode = exitCode;
   };
 
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
-
-  // Unhandled rejection handler
-  process.on('unhandledRejection', (reason) => {
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.on('unhandledRejection', reason => {
     logger.fatal({ reason }, 'Unhandled rejection');
-    process.exit(1);
+    void shutdown('unhandledRejection', 1);
   });
 }
 

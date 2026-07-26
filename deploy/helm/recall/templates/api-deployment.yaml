@@ -2,15 +2,17 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}-api
-  labels:
-    app.kubernetes.io/name: recall
-    app.kubernetes.io/component: api
+  labels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: api }
 spec:
+  {{- if not .Values.api.autoscaling.enabled }}
   replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
   selector:
-    matchLabels:
-      app.kubernetes.io/name: recall
-      app.kubernetes.io/component: api
+    matchLabels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: api }
   template:
     metadata:
       labels:
@@ -23,89 +25,80 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "{{ .Values.api.port }}"
     spec:
+      serviceAccountName: {{ include "recall.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       {{- with .Values.global.imagePullSecrets }}
-      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
       {{- end }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: api }
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: api }
       containers:
         - name: api
-          image: "{{ .Values.global.imageRegistry }}{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          image: {{ include "recall.image" (dict "root" . "image" .Values.api.image) | quote }}
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
           ports:
-            - containerPort: {{ .Values.api.port }}
-              protocol: TCP
+            - { name: http, containerPort: {{ .Values.api.port }}, protocol: TCP }
+          envFrom:
+            - secretRef: { name: {{ include "recall.runtimeSecretName" . }} }
           env:
-            - name: PORT
-              value: "{{ .Values.api.port }}"
-            - name: NODE_ENV
-              value: "{{ .Values.api.env.NODE_ENV }}"
-            - name: LOG_LEVEL
-              value: "{{ .Values.api.env.LOG_LEVEL }}"
-            # Database
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-db-credentials
-                  key: url
-            # Redis
-            - name: REDIS_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-redis-credentials
-                  key: url
-            # Object Storage
-            - name: S3_BUCKET
-              value: "{{ .Values.objectStorage.bucket }}"
-            - name: S3_ENDPOINT
-              value: "{{ .Values.objectStorage.endpoint }}"
-            - name: S3_REGION
-              value: "{{ .Values.objectStorage.region }}"
-            # Embedding
-            - name: EMBEDDING_PROVIDER
-              value: "{{ .Values.embedding.provider }}"
-            - name: EMBEDDING_MODEL
-              value: "{{ if eq .Values.embedding.provider "openai" }}{{ .Values.embedding.openai.model }}{{ else }}{{ .Values.embedding.selfHosted.model }}{{ end }}"
-            - name: EMBEDDING_DIMENSIONS
-              value: "{{ if eq .Values.embedding.provider "openai" }}{{ .Values.embedding.openai.dimensions }}{{ else }}{{ .Values.embedding.selfHosted.dimensions }}{{ end }}"
-            {{- if ne .Values.embedding.provider "openai" }}
-            - name: EMBEDDING_URL
-              value: "{{ .Values.embedding.selfHosted.url }}"
-            {{- end }}
-            # LLM
-            - name: LLM_PROVIDER
-              value: "{{ .Values.llm.provider }}"
-            {{- if .Values.llm.selfHosted.url }}
-            - name: LLM_URL
-              value: "{{ .Values.llm.selfHosted.url }}"
-            {{- end }}
-            # OTEL
+            - { name: PORT, value: {{ .Values.api.port | quote }} }
+            - { name: NODE_ENV, value: {{ .Values.api.env.NODE_ENV | quote }} }
+            - { name: LOG_LEVEL, value: {{ .Values.api.env.LOG_LEVEL | quote }} }
+            - { name: S3_BUCKET, value: {{ .Values.objectStorage.bucket | quote }} }
+            - { name: S3_REGION, value: {{ .Values.objectStorage.region | quote }} }
+            - { name: S3_ENDPOINT, value: {{ .Values.objectStorage.endpoint | quote }} }
+            - { name: EMBEDDING_PROVIDER, value: {{ .Values.embedding.provider | quote }} }
+            - { name: EMBEDDING_MODEL, value: {{ ternary .Values.embedding.openai.model .Values.embedding.selfHosted.model (eq .Values.embedding.provider "openai") | quote }} }
+            - { name: EMBEDDING_DIMENSIONS, value: "1536" }
+            - { name: EMBEDDING_URL, value: {{ .Values.embedding.selfHosted.url | quote }} }
+            - { name: LLM_PROVIDER, value: {{ .Values.llm.provider | quote }} }
+            - { name: LLM_MODEL, value: {{ .Values.llm.model | default .Values.llm.selfHosted.model | default "" | quote }} }
+            - { name: LLM_URL, value: {{ .Values.llm.selfHosted.url | quote }} }
+            - { name: AUTH_ISSUER, value: {{ .Values.auth.issuer | quote }} }
+            - { name: AUTH_AUDIENCE, value: {{ .Values.auth.audience | quote }} }
             {{- if .Values.observability.otel.enabled }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "{{ .Values.observability.otel.endpoint }}"
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.observability.otel.endpoint | quote }} }
             {{- end }}
-          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          resources: {{ toYaml .Values.api.resources | nindent 12 }}
+          startupProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 5
+            failureThreshold: 24
           livenessProbe:
-            httpGet:
-              path: /health
-              port: {{ .Values.api.port }}
-            initialDelaySeconds: 10
+            httpGet: { path: /health, port: http }
             periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
           readinessProbe:
-            httpGet:
-              path: /health/ready
-              port: {{ .Values.api.port }}
-            initialDelaySeconds: 5
+            httpGet: { path: /health/ready, port: http }
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ .Release.Name }}-api
+  labels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: api }
 spec:
   type: {{ .Values.api.service.type }}
   ports:
-    - port: {{ .Values.api.service.port }}
-      targetPort: {{ .Values.api.port }}
-      protocol: TCP
-  selector:
-    app.kubernetes.io/name: recall
-    app.kubernetes.io/component: api
+    - { name: http, port: {{ .Values.api.service.port }}, targetPort: http, protocol: TCP }
+  selector: { app.kubernetes.io/name: recall, app.kubernetes.io/component: api }

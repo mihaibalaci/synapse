@@ -7,16 +7,22 @@
  * Runs as a BullMQ worker consuming from the session-processing queue.
  */
 
+import { v5 as uuidv5 } from 'uuid';
 import { Worker, Job } from 'bullmq';
 import { getConfig } from '../config/index.js';
 import { createChildLogger } from '../utils/logger.js';
-import { QUEUE_NAMES, type SessionProcessingJob, enqueueChunkProcessing } from './queue.js';
+import {
+  QUEUE_NAMES,
+  type SessionProcessingJob,
+} from './queue.js';
 import { SessionParser } from './parser.js';
 import { SemanticSegmenter } from './segmenter.js';
 import { SessionRepository } from '../storage/session-repository.js';
 import { ObjectStorageClient } from '../storage/object-storage.js';
 import { ChunkRepository } from '../storage/chunk-repository.js';
+import { ProcessingStatusRepository } from '../storage/processing-status-repository.js';
 import { EmbeddingClient } from '../utils/embedding.js';
+import { GovernanceScanner } from '../utils/governance.js';
 import { type SessionRecord, type Chunk } from '../models/index.js';
 
 const logger = createChildLogger({ module: 'pipeline-worker' });
@@ -27,6 +33,7 @@ export class IngestionPipeline {
   private parser: SessionParser;
   private segmenter: SemanticSegmenter;
   private embeddingClient: EmbeddingClient;
+  private governanceScanner: GovernanceScanner;
   private sessionRepo: SessionRepository;
   private chunkRepo: ChunkRepository;
   private objectStorage: ObjectStorageClient;
@@ -35,6 +42,7 @@ export class IngestionPipeline {
     this.parser = new SessionParser();
     this.segmenter = new SemanticSegmenter();
     this.embeddingClient = new EmbeddingClient();
+    this.governanceScanner = new GovernanceScanner();
     this.sessionRepo = new SessionRepository();
     this.chunkRepo = new ChunkRepository();
     this.objectStorage = new ObjectStorageClient();
@@ -49,6 +57,16 @@ export class IngestionPipeline {
 
     logger.info({ sessionId, tokens: job.totalTokens }, 'Starting session processing');
 
+    const existingSession = await this.sessionRepo.findById(sessionId);
+    if (existingSession?.searchableStatus === 'searchable'
+      || existingSession?.searchableStatus === 'blocked') {
+      const existingChunks = await this.chunkRepo.findBySessionId(sessionId);
+      return {
+        chunkCount: existingChunks.length,
+        tier: existingSession.enrichmentStatus === 'not_required' ? 'fast' : 'deep',
+      };
+    }
+
     try {
       // 1. Update status → parsing
       await this.sessionRepo.updateStatus(sessionId, 'parsing');
@@ -56,7 +74,17 @@ export class IngestionPipeline {
       // 2. Retrieve raw session from S3
       const config = getConfig();
       const { body } = await this.objectStorage.getObject(config.S3_BUCKET, rawStorageKey);
-      const session: SessionRecord = JSON.parse(body);
+      const storedSession = JSON.parse(body) as SessionRecord;
+      // Raw objects intentionally preserve the original upload shape, which has
+      // no database-generated id. Reapply canonical job identity before parsing
+      // so chunks cannot inherit a missing or client-controlled session id.
+      const session: SessionRecord = {
+        ...storedSession,
+        id: sessionId,
+        organizationId,
+        developerId,
+        rawStorageKey,
+      };
 
       // 3. Parse → normalize messages, extract code blocks
       const parsed = await this.parser.parse(session);
@@ -76,36 +104,50 @@ export class IngestionPipeline {
         branch: session.git?.branch,
         commitSha: session.git?.commitSha,
       });
+      chunks.forEach((chunk, index) => {
+        chunk.id = uuidv5(`${sessionId}:chunk:${index}:v1`, '5d4f2e72-30ad-4eb8-9c99-4c67c8bb7077');
+      });
 
-      // 5. Generate embeddings for all chunks (batch, cheap)
-      const contents = chunks.map(c => `${c.title}\n${c.summary}\n${c.content}`);
+      // 5. Governance is a hard gate before embeddings, database FTS, graph,
+      // facts, or any downstream searchable representation is created.
+      const scanResults = chunks.map(chunk => this.governanceScanner.scanChunk(chunk));
+      const governedChunks = scanResults.map(result => result.chunk);
+      const searchableChunks = scanResults
+        .filter(result => result.scanResult.classification !== 'restricted')
+        .map(result => result.chunk);
+      const restrictedCount = governedChunks.length - searchableChunks.length;
+
+      // Restricted chunks are retained only as redacted, owner-accessible source
+      // records. They receive no embedding or indexing/enrichment jobs.
+      const contents = searchableChunks.map(chunk => `${chunk.title}\n${chunk.summary}\n${chunk.content}`);
       const embeddings = await this.embeddingClient.embedBatch(contents);
-
-      for (let i = 0; i < chunks.length; i++) {
-        chunks[i].embedding = embeddings[i];
+      for (let index = 0; index < searchableChunks.length; index++) {
+        searchableChunks[index].embedding = embeddings[index];
       }
 
-      // 6. Persist chunks (immediately searchable after this step)
-      await this.chunkRepo.createBatch(chunks);
+      // Tier is decided before the transaction so the outbox and expected
+      // action ledger are committed atomically with every chunk.
+      const tier = this.classifyTier(session, parsed, governedChunks);
+      if (tier === 'deep') await this.sessionRepo.updateStatus(sessionId, 'extracting');
 
-      // ═══ TIER DECISION ═══
-      // Determine if this session warrants deep processing (LLM extraction + dedup + graph)
-      const tier = this.classifyTier(session, parsed, chunks);
-
-      if (tier === 'deep') {
-        // 7. Enqueue downstream processing (knowledge extraction + dedup + graph)
-        await this.sessionRepo.updateStatus(sessionId, 'extracting');
-
-        for (const chunk of chunks) {
-          await enqueueChunkProcessing({ chunkId: chunk.id, sessionId, action: 'extract' });
-          await enqueueChunkProcessing({ chunkId: chunk.id, sessionId, action: 'deduplicate' });
-        }
+      const created = await this.chunkRepo.createBatchWithOutbox(governedChunks, {
+        sessionId,
+        searchableChunkIds: new Set(searchableChunks.map(chunk => chunk.id)),
+        deep: tier === 'deep',
+      });
+      if (!created && governedChunks[0]) {
+        await new ProcessingStatusRepository().reconcileChunkAndSession(governedChunks[0].id);
       }
 
-      // 8. Mark session as indexed (searchable even if deep processing is pending)
-      await this.sessionRepo.updateStatus(sessionId, 'indexed');
+      if (restrictedCount > 0) {
+        logger.warn({ sessionId, restrictedCount }, 'Restricted chunks blocked from searchable processing');
+      }
 
-      logger.info({ sessionId, chunkCount: chunks.length, tier }, 'Session processing complete');
+      if (searchableChunks.length === 0) {
+        await this.sessionRepo.updateStatus(sessionId, 'indexed');
+      }
+
+      logger.info({ sessionId, chunkCount: chunks.length, tier }, 'Session processing scheduled');
       return { chunkCount: chunks.length, tier };
     } catch (error) {
       logger.error({ err: error, sessionId }, 'Session processing failed');

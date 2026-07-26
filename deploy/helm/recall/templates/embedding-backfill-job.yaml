@@ -1,0 +1,43 @@
+{{- if .Values.embeddingBackfill.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-embedding-backfill-v{{ .Values.embeddingBackfill.targetVersion }}
+  labels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: embedding-backfill }
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: embedding-backfill }
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "recall.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: backfill
+          image: {{ include "recall.image" (dict "root" . "image" .Values.worker.image) | quote }}
+          command: ["node", "scripts/backfill-embeddings.mjs"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          envFrom:
+            - secretRef: { name: {{ include "recall.runtimeSecretName" . }} }
+          env:
+            - name: MIGRATION_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.migration.secretName }}, key: {{ .Values.migration.secretKey }} }
+            - { name: EMBEDDING_PROVIDER, value: {{ .Values.embedding.provider | quote }} }
+            - { name: EMBEDDING_MODEL, value: {{ ternary .Values.embedding.openai.model .Values.embedding.selfHosted.model (eq .Values.embedding.provider "openai") | quote }} }
+            - { name: EMBEDDING_DIMENSIONS, value: "1536" }
+            - { name: EMBEDDING_URL, value: {{ .Values.embedding.selfHosted.url | quote }} }
+            - { name: EMBEDDING_VERSION, value: {{ .Values.embeddingBackfill.targetVersion | quote }} }
+            - { name: BACKFILL_BATCH_SIZE, value: {{ .Values.embeddingBackfill.batchSize | quote }} }
+          resources:
+            requests: { cpu: 500m, memory: 512Mi }
+            limits: { cpu: 2000m, memory: 2Gi }
+{{- end }}

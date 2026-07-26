@@ -1,10 +1,9 @@
 node_modules
 dist
+.next
 .git
 .env
 *.log
-infra/cdk/node_modules
-infra/cdk/cdk.out
 tests
 docs
 .DS_Store

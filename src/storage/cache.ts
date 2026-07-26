@@ -1,180 +1,127 @@
-/**
- * Cache Layer (Redis)
- *
- * Frequently requested knowledge shouldn't require repeated
- * vector search + LLM processing. Redis caches:
- *   - Search results for common queries
- *   - Ranked answer sets
- *   - Session deduplication keys
- *   - Rate limiting counters
- *
- * Cache invalidation:
- *   - TTL-based (default 1 hour)
- *   - Explicit invalidation when chunks are updated
- *   - Background refresh for high-traffic queries
- */
+/** Redis cache with authorization-safe keys and non-blocking invalidation. */
 
+import { createHash } from 'node:crypto';
 import Redis from 'ioredis';
 import { getConfig } from '../config/index.js';
 import { createChildLogger } from '../utils/logger.js';
-import { type SearchResponse } from '../models/index.js';
+import { type SearchRequest, type SearchResponse } from '../models/index.js';
 
 const logger = createChildLogger({ module: 'cache' });
-
 let redis: Redis | null = null;
-
-// ─── Connection ──────────────────────────────────────────────────────────────
 
 export function getRedis(): Redis {
   if (redis) return redis;
-
   const config = getConfig();
   redis = new Redis(config.REDIS_URL, {
     maxRetriesPerRequest: 3,
-    retryStrategy: (times) => Math.min(times * 50, 2000),
+    retryStrategy: times => Math.min(times * 50, 2000),
     lazyConnect: true,
   });
-
-  redis.on('error', (err) => {
-    logger.error({ err }, 'Redis connection error');
-  });
-
-  redis.on('connect', () => {
-    logger.info('Redis connected');
-  });
-
+  redis.on('error', err => logger.error({ err }, 'Redis connection error'));
+  redis.on('connect', () => logger.info('Redis connected'));
   return redis;
 }
 
-// ─── Cache Keys ──────────────────────────────────────────────────────────────
-
 const PREFIXES = {
   SEARCH: 'search:',
-  CONTEXT: 'ctx:',
-  CHUNK: 'chunk:',
   SESSION_DEDUP: 'sdedup:',
-  FEEDBACK: 'fb:',
   POPULAR: 'popular:',
 } as const;
 
-function searchKey(query: string, orgId: string, strategy: string): string {
-  // Normalize query for cache key
-  const normalized = query.toLowerCase().trim().replace(/\s+/g, ' ');
-  const hash = simpleHash(normalized);
-  return `${PREFIXES.SEARCH}${orgId}:${strategy}:${hash}`;
-}
-
-function contextKey(query: string, orgId: string, repo?: string): string {
-  const normalized = query.toLowerCase().trim().replace(/\s+/g, ' ');
-  const hash = simpleHash(`${normalized}:${repo ?? ''}`);
-  return `${PREFIXES.CONTEXT}${orgId}:${hash}`;
-}
-
-function simpleHash(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, canonicalize(nested)]));
   }
-  return Math.abs(hash).toString(36);
+  return value;
 }
 
-// ─── Search Cache ────────────────────────────────────────────────────────────
+/** Includes identity, ACL claims, filters, context, pagination, and output shape. */
+function searchKey(request: SearchRequest): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify(canonicalize(request)))
+    .digest('base64url');
+  return `${PREFIXES.SEARCH}${request.organizationId}:${request.developerId}:${digest}`;
+}
 
 export class SearchCache {
-  private ttlSeconds: number;
+  constructor(private readonly ttlSeconds: number = 3600) {}
 
-  constructor(ttlSeconds: number = 3600) { // 1 hour default
-    this.ttlSeconds = ttlSeconds;
-  }
-
-  /**
-   * Get cached search results.
-   */
-  async get(query: string, orgId: string, strategy: string): Promise<SearchResponse | null> {
-    const r = getRedis();
-    const key = searchKey(query, orgId, strategy);
-
+  async get(request: SearchRequest): Promise<SearchResponse | null> {
+    const key = searchKey(request);
     try {
-      const cached = await r.get(key);
+      const cached = await getRedis().get(key);
       if (!cached) return null;
-
       logger.debug({ key }, 'Cache hit');
-      return JSON.parse(cached);
+      return JSON.parse(cached) as SearchResponse;
     } catch (error) {
       logger.warn({ err: error, key }, 'Cache read failed');
       return null;
     }
   }
 
-  /**
-   * Cache search results.
-   */
-  async set(
-    query: string,
-    orgId: string,
-    strategy: string,
-    response: SearchResponse,
-  ): Promise<void> {
-    const r = getRedis();
-    const key = searchKey(query, orgId, strategy);
-
+  async set(request: SearchRequest, response: SearchResponse): Promise<void> {
+    const key = searchKey(request);
     try {
-      await r.setex(key, this.ttlSeconds, JSON.stringify(response));
+      await getRedis().setex(key, this.ttlSeconds, JSON.stringify(response));
       logger.debug({ key, ttl: this.ttlSeconds }, 'Cache set');
     } catch (error) {
       logger.warn({ err: error, key }, 'Cache write failed');
     }
   }
 
-  /**
-   * Invalidate cache for a specific organization (when new knowledge is indexed).
-   */
   async invalidateOrg(orgId: string): Promise<void> {
-    const r = getRedis();
+    const client = getRedis();
+    let cursor = '0';
+    let removed = 0;
     try {
-      const keys = await r.keys(`${PREFIXES.SEARCH}${orgId}:*`);
-      if (keys.length > 0) {
-        await r.del(...keys);
-        logger.debug({ orgId, count: keys.length }, 'Cache invalidated');
-      }
+      do {
+        const [nextCursor, keys] = await client.scan(
+          cursor,
+          'MATCH',
+          `${PREFIXES.SEARCH}${orgId}:*`,
+          'COUNT',
+          200,
+        );
+        cursor = nextCursor;
+        if (keys.length > 0) {
+          removed += await client.unlink(...keys);
+        }
+      } while (cursor !== '0');
+      logger.debug({ orgId, count: removed }, 'Cache invalidated');
     } catch (error) {
       logger.warn({ err: error, orgId }, 'Cache invalidation failed');
     }
   }
 
-  /**
-   * Track popular queries for pre-warming.
-   */
   async trackQuery(query: string, orgId: string): Promise<void> {
-    const r = getRedis();
     const key = `${PREFIXES.POPULAR}${orgId}`;
-
     try {
-      await r.zincrby(key, 1, query.toLowerCase().trim());
-      // Keep only top 1000
-      await r.zremrangebyrank(key, 0, -1001);
+      const client = getRedis();
+      await client.zincrby(key, 1, query.toLowerCase().trim());
+      await client.zremrangebyrank(key, 0, -1001);
     } catch {
-      // Non-critical, ignore
+      // Analytics is non-critical.
     }
   }
 
-  /**
-   * Get most popular queries (for cache pre-warming / analytics).
-   */
-  async getPopularQueries(orgId: string, limit: number = 50): Promise<Array<{ query: string; count: number }>> {
-    const r = getRedis();
-    const key = `${PREFIXES.POPULAR}${orgId}`;
-
+  async getPopularQueries(
+    orgId: string,
+    limit: number = 50,
+  ): Promise<Array<{ query: string; count: number }>> {
     try {
-      const results = await r.zrevrange(key, 0, limit - 1, 'WITHSCORES');
+      const results = await getRedis().zrevrange(
+        `${PREFIXES.POPULAR}${orgId}`,
+        0,
+        limit - 1,
+        'WITHSCORES',
+      );
       const queries: Array<{ query: string; count: number }> = [];
-
-      for (let i = 0; i < results.length; i += 2) {
-        queries.push({ query: results[i], count: parseInt(results[i + 1], 10) });
+      for (let index = 0; index < results.length; index += 2) {
+        queries.push({ query: results[index], count: Number(results[index + 1]) });
       }
-
       return queries;
     } catch {
       return [];
@@ -182,43 +129,34 @@ export class SearchCache {
   }
 }
 
-// ─── Session Dedup Cache ─────────────────────────────────────────────────────
-
-/**
- * Prevents duplicate session uploads (idempotency).
- */
 export async function checkSessionIdempotency(clientId: string): Promise<boolean> {
-  const r = getRedis();
-  const key = `${PREFIXES.SESSION_DEDUP}${clientId}`;
-
   try {
-    const result = await r.set(key, '1', 'EX', 86400, 'NX'); // 24h expiry, only set if not exists
-    return result === 'OK'; // true = new session, false = duplicate
+    const result = await getRedis().set(
+      `${PREFIXES.SESSION_DEDUP}${clientId}`,
+      '1',
+      'EX',
+      86400,
+      'NX',
+    );
+    return result === 'OK';
   } catch {
-    return true; // On error, allow (at-least-once is acceptable)
+    return true;
   }
 }
 
-// ─── Health Check ────────────────────────────────────────────────────────────
-
 export async function checkCacheHealth(): Promise<{ healthy: boolean; latencyMs: number }> {
   const start = Date.now();
-  const r = getRedis();
-
   try {
-    await r.ping();
+    await getRedis().ping();
     return { healthy: true, latencyMs: Date.now() - start };
   } catch {
     return { healthy: false, latencyMs: Date.now() - start };
   }
 }
 
-// ─── Graceful Shutdown ───────────────────────────────────────────────────────
-
 export async function closeCache(): Promise<void> {
-  if (redis) {
-    await redis.quit();
-    redis = null;
-    logger.info('Redis connection closed');
-  }
+  if (!redis) return;
+  await redis.quit();
+  redis = null;
+  logger.info('Redis connection closed');
 }

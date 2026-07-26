@@ -1,39 +1,18 @@
-# ─── Worker Service Dockerfile ────────────────────────────────────────────────
-# Multi-stage build for ingestion pipeline workers.
-# Handles session parsing, segmentation, extraction, deduplication.
-
-# Stage 1: Build
-FROM node:20-alpine AS builder
-
+FROM node:20.19.1-alpine3.21 AS builder
 WORKDIR /app
+COPY . .
+RUN npm ci --prefer-offline && npm run build:core
 
-COPY package.json package-lock.json* ./
-RUN npm ci --prefer-offline
-
-COPY tsconfig.json ./
-COPY src/ ./src/
-RUN npm run build
-
-# Stage 2: Production
-FROM node:20-alpine AS production
-
+FROM node:20.19.1-alpine3.21 AS production
 WORKDIR /app
-
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json ./
+COPY packages ./packages
 RUN npm ci --prefer-offline --omit=dev && npm cache clean --force
-
 COPY --from=builder /app/dist ./dist
-
-# Non-root user
-RUN addgroup -g 1001 -S appuser && \
-    adduser -S appuser -u 1001 -G appuser
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/migrations ./migrations
+RUN addgroup -g 1001 -S appuser && adduser -S appuser -u 1001 -G appuser
 USER appuser
-
-# Workers don't expose HTTP, but we still have a simple health check
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD node -e "process.exit(0)"
-
-ENV NODE_ENV=production
-
-# Workers run a different entry point that starts BullMQ consumers
+EXPOSE 3001
+ENV NODE_ENV=production WORKER_HEALTH_PORT=3001
 CMD ["node", "dist/worker-entry.js"]

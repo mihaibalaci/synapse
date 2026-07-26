@@ -25,6 +25,8 @@ async function handleFeedback(
 ): Promise<void> {
   const event: FeedbackEvent = {
     ...request.body,
+    developerId: request.authContext.userId,
+    organizationId: request.authContext.organizationId,
     id: uuidv4(),
     timestamp: new Date().toISOString(),
   };
@@ -84,6 +86,8 @@ async function handleBatchFeedback(
   for (const rawEvent of events) {
     const event: FeedbackEvent = {
       ...rawEvent,
+      developerId: request.authContext.userId,
+      organizationId: request.authContext.organizationId,
       id: uuidv4(),
       timestamp: new Date().toISOString(),
     };

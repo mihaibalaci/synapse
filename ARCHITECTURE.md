@@ -42,7 +42,7 @@ Learnings incorporated:
 Key changes from v2:
 - **Consolidated storage**: Postgres (pgvector + FTS) replaces separate OpenSearch + Vector DB
 - **Tiered ingestion**: Cheap heuristic pass first; LLM only for high-value sessions
-- **Event-driven graph**: Apache AGE extension in Postgres replaces standalone Neo4j
+- **Event-driven graph**: organization-scoped relational graph tables in Postgres replace standalone Neo4j
 - **Streaming dedup**: Bloom filter pre-check eliminates 80% of dedup candidates instantly
 - **Adaptive retrieval**: Skip graph expansion when vector scores are high-confidence
 
@@ -67,7 +67,7 @@ Key changes from v2:
 │  ┌─────────────────┐    │         │  Query → Embed → Parallel Search │
 │  │  Tier 1: Fast   │    │         │    ├─ pgvector ANN (semantic)    │
 │  │  (heuristic seg │    │         │    ├─ pg FTS (BM25 keyword)      │
-│  │   + embed only) │    │         │    └─ AGE graph expansion (opt.) │
+│  │   + embed only) │    │         │    └─ graph expansion (opt.)     │
 │  └────────┬────────┘    │         │         │                        │
 │           │ promotes     │         │    ┌────▼──────────────────┐     │
 │           ▼              │         │    │  RRF Fusion + Rerank  │     │
@@ -87,7 +87,7 @@ Key changes from v2:
 │  │  • JSONB (metadata, ACLs) │  │
 │  │  • pgvector (embeddings)  │  │
 │  │  • tsvector (BM25 FTS)    │  │
-│  │  • Apache AGE (graph)     │  │
+│  │  • graph_nodes/_edges     │  │
 │  │  • RLS (permissions)      │  │
 │  └────────────────────────────┘  │
 │  ┌─────────┐  ┌──────────────┐  │
@@ -215,7 +215,7 @@ Query arrives
     ├─ RRF fusion → top 30 candidates
     │
     ├─ IF top semantic score < 0.85:
-    │   └─ Signal 5: Graph expansion via AGE (add 20)  (~30ms, conditional)
+    │   └─ Signal 5: Relational graph expansion (add 20) (~30ms, conditional)
     │
     ├─ Permission filter (RLS, near-zero overhead)
     │
@@ -356,7 +356,7 @@ re-evaluation of low-scoring chunks.
 | Tokens/day (ingestion) | ~350M |
 | Chunks/day (after segmentation) | ~240,000 (avg 10 chunks/session) |
 | Chunks/year | ~60M |
-| Embeddings storage (3072-dim float32) | ~700 GB/year |
+| Embeddings storage (1536-dim float32) | ~350 GB/year |
 | Vector search index (HNSW) | ~50 GB hot (fits in RAM on r6g.2xlarge) |
 | Object storage | ~2 TB/year (raw sessions) |
 | Postgres total (data + indexes) | ~200 GB year 1, ~800 GB year 3 |
@@ -366,8 +366,8 @@ re-evaluation of low-scoring chunks.
 | Cost Category | v1 Estimate | v2 Estimate | Savings |
 |--------------|------------|------------|---------|
 | LLM extraction (all sessions) | $1,050/day | $210/day | 80% (tiered) |
-| Embedding (3072d all chunks) | $45/day | $18/day | 60% (text-embedding-3-small for indexing, large only for queries) |
-| Neo4j cluster | $2,000/mo | $0 | 100% (AGE in Postgres) |
+| Embedding (1536d all chunks and queries) | $45/day | $18/day | 60% (single compatible model across providers) |
+| Neo4j cluster | $2,000/mo | $0 | 100% (relational graph in Postgres) |
 | OpenSearch cluster | $1,500/mo | $0 | 100% (pg tsvector) |
 | Postgres (Aurora r6g.xl) | $800/mo | $1,200/mo | -50% (larger, but handles more) |
 | Redis | $300/mo | $300/mo | — |
@@ -375,12 +375,12 @@ re-evaluation of low-scoring chunks.
 
 ### Embedding Optimization: Matryoshka + Quantization
 
-Use OpenAI's Matryoshka property for adaptive dimensionality:
-- **Indexing**: Store full 3072-dim float32 for maximum recall
-- **Fast pre-filter**: Use first 256 dims (binary quantized) for cheap candidate generation
-- **Rerank pass**: Full 3072 dims on top-50 candidates
+Use one globally compatible 1536-dimensional embedding space:
+- **Cloud**: OpenAI `text-embedding-3-small` with `dimensions: 1536`
+- **Self-hosted**: TEI/vLLM with a 1536-dimensional model such as `Alibaba-NLP/gte-Qwen2-1.5B-instruct`
+- **Validation**: Reject provider responses that do not contain exactly 1536 finite values
 
-This gives 12x storage reduction for the pre-filter index while maintaining final accuracy.
+Changing models requires creating a versioned embedding column/index and completing a full re-embedding migration before switching reads.
 
 ---
 
@@ -504,11 +504,11 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full instructions.
 |------|-----------|-------------|--------|
 | Storage complexity | 5 separate datastores | 3 stores (Postgres does 4 jobs) | -60% ops overhead |
 | LLM cost | All sessions through Sonnet | Tiered: heuristic → Haiku → Sonnet | -80% LLM spend |
-| Embedding cost | 3072d for all chunks | 1536d index + 3072d query + Matryoshka pre-filter | -60% embedding cost |
+| Embedding cost | Mixed incompatible dimensions | Single 1536d space across indexing and queries | Correct pgvector operations |
 | Retrieval latency | Sequential: embed → vector → filter → graph → rerank | Parallel within PG + conditional graph | -40ms p99 |
 | Dedup overhead | Full cosine on all candidates | Bloom filter pre-check eliminates 80% | -70% dedup compute |
 | Permission model | Post-filter (load then discard) | RLS pre-filter (never loads unauthorized rows) | -30% memory, stronger security |
-| Graph infrastructure | Standalone Neo4j cluster | AGE extension in Postgres | $0 additional infra |
+| Graph infrastructure | Standalone Neo4j cluster | Relational graph tables in Postgres | $0 additional infra |
 | Search infrastructure | Standalone OpenSearch cluster | Postgres tsvector + GIN | $0 additional infra |
 | Segmentation | LLM for all sessions | Embedding similarity (cheap) with LLM promotion | -90% segmentation cost |
 | Cache utilization | 1hr flat TTL | Adaptive TTL based on query frequency + staleness | +25% hit rate |

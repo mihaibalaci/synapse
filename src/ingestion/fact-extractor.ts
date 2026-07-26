@@ -17,11 +17,12 @@
  *   "Always use VPC endpoints instead of NAT gateway for S3 access"
  */
 
-import { v4 as uuidv4 } from 'uuid';
+import { v5 as uuidv5 } from 'uuid';
 import { Worker, Job } from 'bullmq';
 import { createChildLogger } from '../utils/logger.js';
 import { getConfig } from '../config/index.js';
 import { QUEUE_NAMES, type ChunkProcessingJob } from './queue.js';
+import { runTrackedChunkJob } from './tracked-job.js';
 import { ChunkRepository } from '../storage/chunk-repository.js';
 import { FactRepository } from '../storage/fact-repository.js';
 import { EmbeddingClient } from '../utils/embedding.js';
@@ -92,8 +93,8 @@ export class FactExtractor {
 
     // Step 3: Build MemoryFact objects
     const now = new Date().toISOString();
-    const facts: MemoryFact[] = rawFacts.map(raw => ({
-      id: uuidv4(),
+    const facts: MemoryFact[] = rawFacts.map((raw, index) => ({
+      id: uuidv5(`${chunk.id}:fact:${index}:${raw.content}`, 'e585bb5c-7b92-430e-824d-cc1b5876b922'),
       content: raw.content,
       type: raw.type as FactType,
       entities: raw.entities,
@@ -375,18 +376,19 @@ export function startFactExtractionWorker(): Worker {
   const chunkRepo = new ChunkRepository();
 
   factWorker = new Worker(
-    QUEUE_NAMES.KNOWLEDGE_EXTRACTION,
-    async (job: Job<ChunkProcessingJob>) => {
+    QUEUE_NAMES.FACT_EXTRACTION,
+    async (job: Job<ChunkProcessingJob>) => runTrackedChunkJob(job.data, async () => {
       const { chunkId } = job.data;
       const chunk = await chunkRepo.findById(chunkId);
-      if (!chunk) {
-        logger.warn({ chunkId }, 'Chunk not found for fact extraction');
-        return { factCount: 0 };
+      if (!chunk) throw new Error(`Chunk ${chunkId} not found for fact extraction`);
+      if (chunk.acl?.classification === 'restricted' || chunk.acl?.discoverable === false) {
+        logger.warn({ chunkId }, 'Restricted chunk blocked from fact extraction');
+        return { factCount: 0, blocked: true };
       }
 
       const facts = await extractor.extract(chunk);
       return { factCount: facts.length, factIds: facts.map(f => f.id) };
-    },
+    }),
     {
       connection: { url: config.REDIS_URL },
       concurrency: 8,

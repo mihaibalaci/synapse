@@ -13,11 +13,10 @@
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
 import { CaptureEventSchema, SessionUploadSchema, type CaptureEvent, type SessionUpload } from '../models/index.js';
 import { createChildLogger } from '../utils/logger.js';
 import { getConfig } from '../config/index.js';
-import { enqueueSession } from '../ingestion/queue.js';
 import { ObjectStorageClient } from '../storage/object-storage.js';
 import { SessionRepository } from '../storage/session-repository.js';
 import { CaptureRepository } from '../storage/capture-repository.js';
@@ -40,9 +39,9 @@ interface PassiveCaptureBody {
     branch?: string;
     language?: string;        // Detected from active file
     filePath?: string;        // Active file when session ended
-    /** Identity (from auth token) */
-    developerId: string;
-    organizationId: string;
+    /** Legacy identity fields are ignored; verified JWT claims are authoritative. */
+    developerId?: string;
+    organizationId?: string;
   };
 }
 
@@ -50,7 +49,8 @@ async function handlePassiveCapture(
   request: FastifyRequest<PassiveCaptureBody>,
   reply: FastifyReply,
 ): Promise<void> {
-  const { messages, source, repository, branch, language, filePath, developerId, organizationId } = request.body;
+  const { messages, source, repository, branch, language, filePath } = request.body;
+  const { userId: developerId, organizationId, teamIds } = request.authContext;
 
   if (!messages || messages.length < 2) {
     reply.status(400).send({ error: 'VALIDATION_ERROR', message: 'At least 2 messages required' });
@@ -68,6 +68,7 @@ async function handlePassiveCapture(
     clientId: sessionId,
     developerId,
     organizationId,
+    teamId: teamIds[0],
     messages: messages.map((m, i) => ({
       id: uuidv4(),
       role: m.role,
@@ -104,24 +105,24 @@ async function handlePassiveCapture(
     });
 
     const sessionRepo = new SessionRepository();
-    await sessionRepo.create({
+    await sessionRepo.createWithOutbox({
       ...session,
       id: sessionId,
       status: 'uploaded',
+      searchableStatus: 'pending',
+      enrichmentStatus: 'pending',
       rawStorageKey: rawKey,
       createdAt: now,
       updatedAt: now,
       processingAttempts: 0,
-    });
-
-    await enqueueSession({
+    }, {
       sessionId,
       organizationId,
       developerId,
       rawStorageKey: rawKey,
       totalTokens,
       messageCount: messages.length,
-      priority: 5, // Normal priority for passive capture
+      priority: 5,
     });
 
     logger.info({
@@ -161,8 +162,14 @@ async function handleActiveCapture(
   reply: FastifyReply,
 ): Promise<void> {
   const { tags, annotation, linkedTicket, promoteTier2, ...sessionData } = request.body;
+  const identity = request.authContext;
 
-  const parseResult = SessionUploadSchema.safeParse(sessionData);
+  const parseResult = SessionUploadSchema.safeParse({
+    ...sessionData,
+    developerId: identity.userId,
+    organizationId: identity.organizationId,
+    teamId: identity.teamIds[0],
+  });
   if (!parseResult.success) {
     reply.status(400).send({
       error: 'VALIDATION_ERROR',
@@ -173,7 +180,25 @@ async function handleActiveCapture(
   }
 
   const payload = parseResult.data;
-  const sessionId = uuidv4();
+  const existing = await new SessionRepository().findByClientId(
+    payload.clientId,
+    payload.developerId,
+    payload.organizationId,
+  );
+  if (existing) {
+    reply.status(202).send({
+      sessionId: existing.id,
+      status: existing.status,
+      mode: 'active',
+      tier: promoteTier2 ? 'deep' : 'auto',
+      message: 'Session was already saved',
+    });
+    return;
+  }
+  const sessionId = uuidv5(
+    `${payload.organizationId}:${payload.developerId}:${payload.clientId}`,
+    'bf821a66-0d7d-4ff7-a5e2-d72131b94563',
+  );
   const now = new Date().toISOString();
 
   // Enrich metadata with active-capture info
@@ -191,25 +216,24 @@ async function handleActiveCapture(
     });
 
     const sessionRepo = new SessionRepository();
-    await sessionRepo.create({
+    await sessionRepo.createWithOutbox({
       ...payload,
       id: sessionId,
       status: 'uploaded',
+      searchableStatus: 'pending',
+      enrichmentStatus: 'pending',
       rawStorageKey: rawKey,
       createdAt: now,
       updatedAt: now,
       processingAttempts: 0,
-    });
-
-    // Active captures get higher priority + force Tier 2 if requested
-    await enqueueSession({
+    }, {
       sessionId,
       organizationId: payload.organizationId,
       developerId: payload.developerId,
       rawStorageKey: rawKey,
       totalTokens: payload.totalTokens,
       messageCount: payload.messages.length,
-      priority: promoteTier2 ? 9 : 7, // Higher priority than passive
+      priority: promoteTier2 ? 9 : 7,
     });
 
     logger.info({
@@ -245,6 +269,8 @@ async function handleAmbientCapture(
 ): Promise<void> {
   const event: CaptureEvent = {
     ...request.body,
+    developerId: request.authContext.userId,
+    organizationId: request.authContext.organizationId,
     id: uuidv4(),
     processed: false,
     factIds: [],
@@ -258,7 +284,7 @@ async function handleAmbientCapture(
 
   try {
     const captureRepo = new CaptureRepository();
-    await captureRepo.create(parseResult.data);
+    await captureRepo.createWithOutbox(parseResult.data);
 
     logger.debug({
       type: event.type,
@@ -294,18 +320,23 @@ async function handleBatchAmbientCapture(
   }
 
   const captureRepo = new CaptureRepository();
-  let captured = 0;
+  const validEvents: CaptureEvent[] = [];
 
   for (const rawEvent of events) {
-    const event: CaptureEvent = { ...rawEvent, id: uuidv4(), processed: false, factIds: [] };
+    const event: CaptureEvent = {
+      ...rawEvent,
+      developerId: request.authContext.userId,
+      organizationId: request.authContext.organizationId,
+      id: uuidv4(),
+      processed: false,
+      factIds: [],
+    };
     const result = CaptureEventSchema.safeParse(event);
-    if (result.success) {
-      await captureRepo.create(result.data);
-      captured++;
-    }
+    if (result.success) validEvents.push(result.data);
   }
 
-  reply.status(201).send({ captured, total: events.length });
+  await captureRepo.createBatchWithOutbox(validEvents);
+  reply.status(201).send({ captured: validEvents.length, total: events.length });
 }
 
 // ─── Route Registration ──────────────────────────────────────────────────────

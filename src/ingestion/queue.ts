@@ -1,18 +1,10 @@
-/**
- * Ingestion Queue
- *
- * Uses BullMQ (backed by Redis) to manage async processing of uploaded sessions.
- * Provides at-least-once delivery, retries with exponential backoff,
- * and priority-based scheduling.
- */
+/** BullMQ queue contracts and producers for ingestion and enrichment. */
 
-import { Queue, Worker, Job } from 'bullmq';
+import { Queue } from 'bullmq';
 import { getConfig } from '../config/index.js';
 import { createChildLogger } from '../utils/logger.js';
 
 const logger = createChildLogger({ module: 'ingestion-queue' });
-
-// ─── Job Types ───────────────────────────────────────────────────────────────
 
 export interface SessionProcessingJob {
   sessionId: string;
@@ -24,29 +16,39 @@ export interface SessionProcessingJob {
   priority: number;
 }
 
+export type ChunkProcessingAction =
+  | 'facts'
+  | 'knowledge'
+  | 'deduplicate'
+  | 'graph'
+  | 'index';
+
 export interface ChunkProcessingJob {
   chunkId: string;
   sessionId: string;
-  action: 'embed' | 'extract' | 'deduplicate' | 'index';
+  action: ChunkProcessingAction;
 }
 
-// ─── Queue Names ─────────────────────────────────────────────────────────────
+export interface CaptureProcessingJob {
+  captureId: string;
+  organizationId: string;
+}
 
 export const QUEUE_NAMES = {
   SESSION_PROCESSING: 'session-processing',
-  CHUNK_PROCESSING: 'chunk-processing',
-  EMBEDDING: 'embedding',
+  FACT_EXTRACTION: 'fact-extraction',
   KNOWLEDGE_EXTRACTION: 'knowledge-extraction',
   DEDUPLICATION: 'deduplication',
-  REINDEXING: 'reindexing',
+  GRAPH_PROCESSING: 'graph-processing',
+  SEARCH_INDEXING: 'search-indexing',
+  CAPTURE_PROCESSING: 'capture-processing',
 } as const;
-
-// ─── Queue Factory ───────────────────────────────────────────────────────────
 
 const queues = new Map<string, Queue>();
 
 function getQueue(name: string): Queue {
-  if (queues.has(name)) return queues.get(name)!;
+  const existing = queues.get(name);
+  if (existing) return existing;
 
   const config = getConfig();
   const queue = new Queue(name, {
@@ -55,64 +57,73 @@ function getQueue(name: string): Queue {
       removeOnComplete: { count: 1000 },
       removeOnFail: { count: 5000 },
       attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 5000, // 5s, 25s, 125s
-      },
+      backoff: { type: 'exponential', delay: 5000 },
     },
   });
-
   queues.set(name, queue);
   return queue;
 }
 
-// ─── Enqueue Functions ───────────────────────────────────────────────────────
-
 export async function enqueueSession(job: SessionProcessingJob): Promise<string> {
-  const queue = getQueue(QUEUE_NAMES.SESSION_PROCESSING);
-  const result = await queue.add('process-session', job, {
-    priority: 10 - job.priority, // BullMQ: lower number = higher priority
-    jobId: `session-${job.sessionId}`, // Idempotent — same session won't be queued twice
+  const result = await getQueue(QUEUE_NAMES.SESSION_PROCESSING).add('process-session', job, {
+    priority: Math.max(1, 10 - job.priority),
+    jobId: `session-${job.sessionId}`,
   });
-
   logger.debug({ sessionId: job.sessionId, jobId: result.id }, 'Session enqueued');
   return result.id!;
 }
 
-export async function enqueueChunkProcessing(job: ChunkProcessingJob): Promise<string> {
-  const queueName = job.action === 'embed'
-    ? QUEUE_NAMES.EMBEDDING
-    : job.action === 'extract'
-      ? QUEUE_NAMES.KNOWLEDGE_EXTRACTION
-      : job.action === 'deduplicate'
-        ? QUEUE_NAMES.DEDUPLICATION
-        : QUEUE_NAMES.CHUNK_PROCESSING;
+function queueForAction(action: ChunkProcessingAction): string {
+  switch (action) {
+    case 'facts': return QUEUE_NAMES.FACT_EXTRACTION;
+    case 'knowledge': return QUEUE_NAMES.KNOWLEDGE_EXTRACTION;
+    case 'deduplicate': return QUEUE_NAMES.DEDUPLICATION;
+    case 'graph': return QUEUE_NAMES.GRAPH_PROCESSING;
+    case 'index': return QUEUE_NAMES.SEARCH_INDEXING;
+  }
+}
 
-  const queue = getQueue(queueName);
-  const result = await queue.add(job.action, job, {
+export async function enqueueChunkProcessing(job: ChunkProcessingJob): Promise<string> {
+  const result = await getQueue(queueForAction(job.action)).add(job.action, job, {
     jobId: `${job.action}-${job.chunkId}`,
   });
+  return result.id!;
+}
 
+/** Queue every independent deep-enrichment concern for one persisted chunk. */
+export async function enqueueChunkEnrichment(
+  chunkId: string,
+  sessionId: string,
+): Promise<void> {
+  const actions: ChunkProcessingAction[] = ['facts', 'knowledge', 'deduplicate', 'graph'];
+  await Promise.all(actions.map(action => enqueueChunkProcessing({ chunkId, sessionId, action })));
+}
+
+export async function enqueueCaptureProcessing(job: CaptureProcessingJob): Promise<string> {
+  const result = await getQueue(QUEUE_NAMES.CAPTURE_PROCESSING).add('process-capture', job, {
+    jobId: `capture-${job.captureId}`,
+  });
   return result.id!;
 }
 
 export async function enqueueReindexing(chunkIds: string[]): Promise<void> {
-  const queue = getQueue(QUEUE_NAMES.REINDEXING);
-  const jobs = chunkIds.map(id => ({
-    name: 'reindex',
-    data: { chunkId: id },
-    opts: { jobId: `reindex-${id}` },
-  }));
-  await queue.addBulk(jobs);
-  logger.info({ count: chunkIds.length }, 'Reindexing jobs enqueued');
+  if (chunkIds.length === 0) return;
+  const queue = getQueue(QUEUE_NAMES.SEARCH_INDEXING);
+  await queue.addBulk(chunkIds.map(chunkId => ({
+    name: 'index',
+    data: { chunkId, sessionId: '', action: 'index' as const },
+    opts: { jobId: `index-${chunkId}` },
+  })));
+  logger.info({ count: chunkIds.length }, 'Search reindexing jobs enqueued');
 }
 
-// ─── Queue Health ────────────────────────────────────────────────────────────
-
-export async function getQueueHealth(): Promise<Record<string, { waiting: number; active: number; failed: number }>> {
+export async function getQueueHealth(): Promise<Record<string, {
+  waiting: number;
+  active: number;
+  failed: number;
+}>> {
   const health: Record<string, { waiting: number; active: number; failed: number }> = {};
-
-  for (const [name] of Object.entries(QUEUE_NAMES)) {
+  for (const name of Object.values(QUEUE_NAMES)) {
     const queue = getQueue(name);
     const [waiting, active, failed] = await Promise.all([
       queue.getWaitingCount(),
@@ -121,16 +132,13 @@ export async function getQueueHealth(): Promise<Record<string, { waiting: number
     ]);
     health[name] = { waiting, active, failed };
   }
-
   return health;
 }
 
-// ─── Graceful Shutdown ───────────────────────────────────────────────────────
-
 export async function closeQueues(): Promise<void> {
-  for (const [name, queue] of queues.entries()) {
+  await Promise.all([...queues.entries()].map(async ([name, queue]) => {
     await queue.close();
     logger.debug({ queue: name }, 'Queue closed');
-  }
+  }));
   queues.clear();
 }

@@ -1,68 +1,20 @@
-# ══════════════════════════════════════════════════════════════════════════════
-# AWS Cloud Deployment Profile
-#
-# Uses managed services:
-#   - Aurora PostgreSQL (external, pgvector pre-installed)
-#   - ElastiCache Redis (external)
-#   - S3 (native)
-#   - OpenAI embeddings (cloud API)
-#   - Claude LLM (cloud API)
-#
-# Usage:
-#   helm install ctx ./deploy/helm/recall -f profiles/cloud-aws.yaml \
-#     --set postgresql.host=mydb.cluster-xxx.us-east-1.rds.amazonaws.com \
-#     --set redis.host=my-redis.xxx.cache.amazonaws.com
-# ══════════════════════════════════════════════════════════════════════════════
-
 global:
-  profile: "cloud-aws"
-
-postgresql:
-  mode: "managed"
-  host: ""  # Set via --set or secrets
-  port: 5432
-  database: recall
-  existingSecret: "aws-db-credentials"
-  existingSecretKey: "password"
-
-redis:
-  mode: "managed"
-  host: ""  # Set via --set
-  port: 6379
-  existingSecret: "aws-redis-credentials"
-
-objectStorage:
-  provider: "s3"
-  bucket: "recall-raw"
-  region: "us-east-1"
-  # Uses IAM role (IRSA) — no keys needed
-  minio:
-    enabled: false
-
+  profile: cloud-aws
+postgresql: { mode: managed, host: "aurora.cluster.example", port: 5432, database: recall }
+redis: { mode: managed, host: "redis.example", port: 6379, tls: true }
+objectStorage: { provider: s3, bucket: recall-raw-prod, region: us-east-1, endpoint: "" }
 embedding:
-  provider: "openai"
-  openai:
-    apiKey: ""  # From external secret
-    model: "text-embedding-3-small"
-    dimensions: 1536
-
-llm:
-  provider: "claude"
-  apiKey: ""  # From external secret
-  model: "claude-sonnet-4-20250514"
-
+  provider: openai
+  openai: { model: text-embedding-3-small, dimensions: 1536 }
+llm: { provider: claude, model: claude-sonnet-4-20250514, selfHosted: { url: "", model: "" } }
+auth: { issuer: "https://auth.example.com", audience: recall }
+runtimeSecret: { name: recall-runtime }
 secrets:
-  provider: "external-secrets"
-  externalSecrets:
-    secretStore: "aws-secrets-manager"
-
+  provider: external-secrets
+  externalSecrets: { secretStore: aws-secrets-manager, secretStoreKind: ClusterSecretStore, remoteKey: recall/prod/runtime, refreshInterval: 1h }
+migration: { enabled: true, secretName: recall-migrator, secretKey: DATABASE_URL, backoffLimit: 3 }
 api:
   ingress:
-    className: "alb"
-    annotations:
-      alb.ingress.kubernetes.io/scheme: internal
-      alb.ingress.kubernetes.io/target-type: ip
-      alb.ingress.kubernetes.io/certificate-arn: ""
-
-serviceMesh:
-  enabled: false  # Use AWS App Mesh or skip
+    className: alb
+    annotations: { alb.ingress.kubernetes.io/scheme: internal, alb.ingress.kubernetes.io/target-type: ip }
+serviceMesh: { enabled: false, type: istio, mtls: { mode: STRICT } }

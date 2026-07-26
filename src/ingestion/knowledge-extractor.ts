@@ -15,11 +15,12 @@
  * "Problem: VPC DNS resolution → Solution: Move endpoint to public subnet."
  */
 
-import { v4 as uuidv4 } from 'uuid';
+import { v5 as uuidv5 } from 'uuid';
 import { Worker, Job } from 'bullmq';
 import { createChildLogger } from '../utils/logger.js';
 import { getConfig } from '../config/index.js';
 import { QUEUE_NAMES, type ChunkProcessingJob } from './queue.js';
+import { runTrackedChunkJob } from './tracked-job.js';
 import { ChunkRepository } from '../storage/chunk-repository.js';
 import { KnowledgeRepository } from '../storage/knowledge-repository.js';
 import {
@@ -159,7 +160,7 @@ export class KnowledgeExtractor {
       // Step 4: Build the knowledge record
       const now = new Date().toISOString();
       const record: KnowledgeRecord = {
-        id: uuidv4(),
+        id: uuidv5(`${chunk.id}:knowledge:v1`, '906ac37f-8e32-4f2c-8c68-a3708e328916'),
         chunkId: chunk.id,
         sessionId: chunk.sessionId,
         type: knowledgeType,
@@ -196,7 +197,7 @@ export class KnowledgeExtractor {
       return record;
     } catch (error) {
       logger.error({ err: error, chunkId: chunk.id }, 'Knowledge extraction failed');
-      return null;
+      throw error;
     }
   }
 
@@ -409,8 +410,18 @@ export class KnowledgeExtractor {
     return errors.slice(0, 10);
   }
 
-  private extractCitations(chunk: Chunk): Array<{ type: string; reference: string; url?: string; title?: string }> {
-    const citations: Array<{ type: string; reference: string; url?: string; title?: string }> = [];
+  private extractCitations(chunk: Chunk): Array<{
+    type: 'conversation' | 'commit' | 'pull_request' | 'wiki' | 'doc' | 'file';
+    reference: string;
+    url?: string;
+    title?: string;
+  }> {
+    const citations: Array<{
+      type: 'conversation' | 'commit' | 'pull_request' | 'wiki' | 'doc' | 'file';
+      reference: string;
+      url?: string;
+      title?: string;
+    }> = [];
 
     // Always cite the original conversation
     citations.push({
@@ -531,18 +542,19 @@ export function startExtractionWorker(): Worker {
 
   extractionWorker = new Worker(
     QUEUE_NAMES.KNOWLEDGE_EXTRACTION,
-    async (job: Job<ChunkProcessingJob>) => {
+    async (job: Job<ChunkProcessingJob>) => runTrackedChunkJob(job.data, async () => {
       const { chunkId } = job.data;
 
       const chunk = await chunkRepo.findById(chunkId);
-      if (!chunk) {
-        logger.warn({ chunkId }, 'Chunk not found for extraction');
-        return null;
+      if (!chunk) throw new Error(`Chunk ${chunkId} not found for knowledge extraction`);
+      if (chunk.acl?.classification === 'restricted' || chunk.acl?.discoverable === false) {
+        logger.warn({ chunkId }, 'Restricted chunk blocked from knowledge extraction');
+        return { blocked: true };
       }
 
       const knowledge = await extractor.extract(chunk);
       return knowledge ? { knowledgeId: knowledge.id } : null;
-    },
+    }),
     {
       connection: { url: config.REDIS_URL },
       concurrency: 5, // Lower concurrency — LLM calls are expensive

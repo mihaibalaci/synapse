@@ -9,6 +9,8 @@ export {
   AIProvider,
   MessageRole,
   SessionStatus,
+  SearchableStatus,
+  EnrichmentStatus,
   CodeBlockSchema,
   MessageSchema,
   GitContextSchema,

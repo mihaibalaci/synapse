@@ -5,8 +5,8 @@
  * This is the lowest-friction capture method: just react with 📌 to save.
  */
 
-import type { ReactionAddedEvent } from '@slack/bolt';
-import { WebClient } from '@slack/bolt';
+import type { ReactionAddedEvent } from '@slack/types';
+import { WebClient } from '@slack/web-api';
 import { api, getOrgId } from '../api-client.js';
 
 const CAPTURE_EMOJI = 'pushpin'; // 📌

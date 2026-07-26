@@ -22,7 +22,7 @@ same problem someone else already solved.
 
 **Remember**: Extract atomic facts, link entities, build temporal chains. ADD-only — never overwrite history.
 
-**Share** (unique to us): Deduplicate across 600 engineers. One canonical answer per topic instead of 500 copies.
+**Share** (unique to us): Deduplicate across entire engineering organisations. One canonical answer per topic instead of 500 copies.
 
 **Compress** (unique to us): Weekly compaction turns clusters into concise canonical articles. Knowledge gets *smaller and better* over time.
 
@@ -114,7 +114,7 @@ Browse all knowledge, view facts, check entity history, see analytics.
 │                                                                      │
 │  Ingestion Pipeline          Storage Layer         Memory Engine     │
 │  ├─ Parser                   ├─ PostgreSQL 16      ├─ Fact Extractor │
-│  ├─ Segmenter                │  (pgvector+FTS+AGE) ├─ Entity Linker │
+│  ├─ Segmenter                │  (pgvector+FTS+graph)├─ Entity Linker│
 │  ├─ Embedding                ├─ S3 (raw)           ├─ Temporal Chain │
 │  ├─ Deduplication            └─ Redis (cache+queue)├─ Compaction    │
 │  └─ Tier classifier                                └─ Dedup Engine  │
@@ -201,7 +201,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full instructions.
 |-------|-----------|-----------|
 | Control Plane | API | Node.js, Fastify, Zod |
 | | Queue | BullMQ (Redis-backed) |
-| | Database | PostgreSQL 16 (pgvector, tsvector, Apache AGE, RLS) |
+| | Database | PostgreSQL 16 (pgvector, tsvector, pg_trgm, relational graph tables, RLS) |
 | | Object Storage | S3 / GCS / MinIO / Ceph (configurable) |
 | | Cache | Redis 7 |
 | | Embeddings | OpenAI, Ollama, vLLM, or HuggingFace TEI (configurable) |
@@ -216,14 +216,6 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full instructions.
 | | Postgres HA | Patroni (for on-prem/self-managed) or Aurora/Cloud SQL |
 | | Service Mesh | Istio (mTLS, traffic policies, observability) |
 | | Monitoring | OpenTelemetry → Grafana / Prometheus |
-
-## Cost at Scale
-
-For 600 engineers, 24K sessions/day:
-- Infrastructure: ~$13K/month (vs $38K in v1)
-- LLM: ~$6.3K/month (vs $31.5K in v1)
-- Cost per engineer: **~$32/month**
-- Token savings for AI usage: estimated **$50K+/month** in reduced prompt costs
 
 ## License
 

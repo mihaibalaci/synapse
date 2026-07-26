@@ -21,6 +21,7 @@ import { Worker, Job } from 'bullmq';
 import { createChildLogger } from '../utils/logger.js';
 import { getConfig } from '../config/index.js';
 import { QUEUE_NAMES, type ChunkProcessingJob } from './queue.js';
+import { runTrackedChunkJob } from './tracked-job.js';
 import { ChunkRepository } from '../storage/chunk-repository.js';
 import { ClusterRepository } from '../storage/cluster-repository.js';
 import { EmbeddingClient } from '../utils/embedding.js';
@@ -245,29 +246,27 @@ export class DeduplicationEngine {
   ): Promise<{ clusterId: string; mergedWith: string[] }> {
     const duplicateIds = duplicates.map(d => d.chunkId);
 
-    // Check if any duplicate is already in a cluster
-    const existingCluster = await this.clusterRepo.findByMemberChunkId(duplicateIds[0]);
+    // Candidate discovery is tenant-scoped, and every cluster operation keeps
+    // that organization boundary explicit even in service-role workers.
+    const existingCluster = await this.clusterRepo.findByMemberChunkId(
+      chunk.organizationId,
+      duplicateIds[0],
+    );
 
     if (existingCluster) {
-      // Add to existing cluster
-      await this.clusterRepo.addMember(existingCluster.id, chunk.id);
+      await this.clusterRepo.addMember(chunk.organizationId, existingCluster.id, chunk.id);
       await this.chunkRepo.assignToCluster(chunk.id, existingCluster.id, false);
-
-      // Re-evaluate canonical (maybe new chunk is higher quality)
-      await this.reEvaluateCanonical(existingCluster.id);
-
+      await this.reEvaluateCanonical(chunk.organizationId, existingCluster.id);
       return { clusterId: existingCluster.id, mergedWith: duplicateIds };
     }
 
-    // Create new cluster
     const clusterId = uuidv4();
     const allMemberIds = [chunk.id, ...duplicateIds];
-
-    // Determine canonical (highest quality)
     const canonicalId = await this.selectCanonical(allMemberIds);
 
     const cluster: ChunkCluster = {
       id: clusterId,
+      organizationId: chunk.organizationId,
       canonicalChunkId: canonicalId,
       memberChunkIds: allMemberIds,
       title: chunk.title,
@@ -279,7 +278,6 @@ export class DeduplicationEngine {
 
     await this.clusterRepo.create(cluster);
 
-    // Update all member chunks with cluster assignment
     for (const memberId of allMemberIds) {
       await this.chunkRepo.assignToCluster(memberId, clusterId, memberId === canonicalId);
     }
@@ -297,13 +295,10 @@ export class DeduplicationEngine {
     return memberIds[0];
   }
 
-  /**
-   * Re-evaluate which chunk should be canonical in an existing cluster.
-   * Called when a new member is added that might be higher quality.
-   */
-  private async reEvaluateCanonical(clusterId: string): Promise<void> {
+  /** Re-evaluate the canonical representative after adding a member. */
+  private async reEvaluateCanonical(organizationId: string, clusterId: string): Promise<void> {
     // TODO: Load all members, pick highest quality, update cluster.canonicalChunkId
-    logger.debug({ clusterId }, 'Re-evaluating cluster canonical');
+    logger.debug({ organizationId, clusterId }, 'Re-evaluating cluster canonical');
   }
 
   // ─── MinHash Implementation ────────────────────────────────────────────────
@@ -414,17 +409,18 @@ export function startDeduplicationWorker(): Worker {
 
   dedupWorker = new Worker(
     QUEUE_NAMES.DEDUPLICATION,
-    async (job: Job<ChunkProcessingJob>) => {
+    async (job: Job<ChunkProcessingJob>) => runTrackedChunkJob(job.data, async () => {
       const { chunkId } = job.data;
 
       const chunk = await chunkRepo.findById(chunkId);
-      if (!chunk) {
-        logger.warn({ chunkId }, 'Chunk not found for deduplication');
-        return null;
+      if (!chunk) throw new Error(`Chunk ${chunkId} not found for deduplication`);
+      if (chunk.acl?.classification === 'restricted' || chunk.acl?.discoverable === false) {
+        logger.warn({ chunkId }, 'Restricted chunk blocked from deduplication');
+        return { blocked: true };
       }
 
       return engine.deduplicate(chunk);
-    },
+    }),
     {
       connection: { url: config.REDIS_URL },
       concurrency: 10,

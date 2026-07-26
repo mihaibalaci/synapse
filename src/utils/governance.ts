@@ -187,24 +187,71 @@ export class GovernanceScanner {
    * Modifies chunk content in-place and sets ACL flags.
    */
   scanChunk(chunk: Chunk): { chunk: Chunk; scanResult: ScanResult } {
-    const result = this.scan(chunk.content, { redact: true });
+    const findings: ScanResult[] = [];
+    const redact = (value: string): string => {
+      const result = this.scan(value, { redact: true });
+      findings.push(result);
+      return result.redactedContent ?? value;
+    };
 
-    // Also scan title and summary
-    const titleResult = this.scan(chunk.title, { redact: true });
-    const summaryResult = this.scan(chunk.summary, { redact: true });
+    chunk.title = redact(chunk.title);
+    chunk.summary = redact(chunk.summary);
+    chunk.content = redact(chunk.content);
+    chunk.codeReferences = chunk.codeReferences.map(reference => ({
+      ...reference,
+      filePath: redact(reference.filePath),
+      snippet: redact(reference.snippet),
+      ...(reference.repository ? { repository: redact(reference.repository) } : {}),
+    }));
+    chunk.entities = chunk.entities.map(entity => ({
+      ...entity,
+      name: redact(entity.name),
+      ...(entity.context ? { context: redact(entity.context) } : {}),
+    }));
 
-    // Apply redaction
-    if (result.redactedContent) {
-      chunk.content = result.redactedContent;
-    }
-    if (titleResult.redactedContent) {
-      chunk.title = titleResult.redactedContent;
-    }
-    if (summaryResult.redactedContent) {
-      chunk.summary = summaryResult.redactedContent;
-    }
+    const mergeFindings = (
+      key: 'piiFindings' | 'secretFindings',
+    ): Array<{ type: string; count: number }> => {
+      const totals = new Map<string, number>();
+      for (const result of findings) {
+        for (const finding of result[key]) {
+          totals.set(finding.type, (totals.get(finding.type) ?? 0) + finding.count);
+        }
+      }
+      return [...totals].map(([type, count]) => ({ type, count }));
+    };
 
-    return { chunk, scanResult: result };
+    const containsPII = findings.some(result => result.containsPII);
+    const containsSecrets = findings.some(result => result.containsSecrets);
+    const classification: SecurityClassification = containsSecrets
+      ? 'restricted'
+      : containsPII
+        ? 'confidential'
+        : chunk.teamId || chunk.repository
+          ? 'internal'
+          : 'public';
+    const scanResult: ScanResult = {
+      containsPII,
+      containsSecrets,
+      piiFindings: mergeFindings('piiFindings'),
+      secretFindings: mergeFindings('secretFindings'),
+      classification,
+    };
+
+    chunk.acl = {
+      ownerId: chunk.authorId,
+      organizationId: chunk.organizationId,
+      teamIds: chunk.teamId ? [chunk.teamId] : [],
+      repositoryIds: chunk.repository ? [chunk.repository] : [],
+      sharedWith: [],
+      classification,
+      discoverable: classification !== 'restricted',
+      containsPII,
+      containsSecrets,
+      redacted: containsPII || containsSecrets,
+    };
+
+    return { chunk, scanResult };
   }
 }
 

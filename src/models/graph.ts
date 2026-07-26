@@ -81,6 +81,9 @@ export const GraphExpansionRequestSchema = z.object({
   /** Start from these node IDs */
   seedNodeIds: z.array(z.string()),
 
+  /** Organization scope; required when seed IDs may exist in multiple tenants. */
+  organizationId: z.string().optional(),
+
   /** How many hops to traverse */
   maxDepth: z.number().int().min(1).max(4).default(2),
 

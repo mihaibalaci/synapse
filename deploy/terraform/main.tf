@@ -1,83 +1,93 @@
-# ══════════════════════════════════════════════════════════════════════════════
-# Recall — Terraform Root Module
-#
-# Cloud-agnostic infrastructure provisioning.
-# Supports AWS, GCP, and Azure via provider selection.
-#
-# Usage:
-#   terraform init
-#   terraform plan -var-file=environments/aws-prod.tfvars
-#   terraform apply -var-file=environments/aws-prod.tfvars
-# ══════════════════════════════════════════════════════════════════════════════
-
 terraform {
-  required_version = ">= 1.5.0"
+  required_version = ">= 1.8.0, < 2.0.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "5.100.0"
     }
     google = {
       source  = "hashicorp/google"
-      version = "~> 5.0"
+      version = "6.32.0"
     }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.25"
+    random = {
+      source  = "hashicorp/random"
+      version = "3.7.2"
     }
-    helm = {
-      source  = "hashicorp/helm"
-      version = "~> 2.12"
+    tls = {
+      source  = "hashicorp/tls"
+      version = "4.1.0"
     }
   }
 }
 
-# ─── Variables ────────────────────────────────────────────────────────────────
-
 variable "cloud_provider" {
-  description = "Cloud provider: aws | gcp | none (on-prem K8s only)"
-  type        = string
-  default     = "aws"
+  type = string
+
+  validation {
+    condition     = contains(["aws", "gcp", "none"], var.cloud_provider)
+    error_message = "cloud_provider must be aws, gcp, or none."
+  }
 }
 
 variable "environment" {
-  description = "Environment name: dev | staging | prod"
-  type        = string
-  default     = "dev"
+  type = string
 }
 
 variable "region" {
-  description = "Cloud region"
-  type        = string
-  default     = "us-east-1"
+  type = string
+}
+
+variable "gcp_project_id" {
+  type    = string
+  default = ""
 }
 
 variable "kubernetes_cluster_name" {
-  description = "Name of the K8s cluster (EKS, GKE, or existing)"
-  type        = string
-  default     = "recall"
+  type = string
 }
 
 variable "postgres_instance_class" {
-  description = "Database instance size"
-  type        = string
-  default     = "db.r6g.xlarge"
+  type    = string
+  default = "db.r6g.xlarge"
 }
 
 variable "redis_node_type" {
-  description = "Redis node type"
-  type        = string
-  default     = "cache.r7g.large"
+  type    = string
+  default = "cache.r7g.large"
 }
 
 variable "domain" {
-  description = "Domain for the service"
-  type        = string
-  default     = "ctx.internal.company.com"
+  type    = string
+  default = "recall.internal.example.com"
 }
 
-# ─── Networking ───────────────────────────────────────────────────────────────
+variable "kubernetes_namespace" {
+  type    = string
+  default = "recall"
+}
+
+variable "kubernetes_service_account" {
+  type    = string
+  default = "recall"
+}
+
+provider "aws" {
+  region = var.region
+
+  default_tags {
+    tags = {
+      Application = "recall"
+      Environment = var.environment
+      ManagedBy   = "terraform"
+    }
+  }
+}
+
+provider "google" {
+  project = var.gcp_project_id
+  region  = var.region
+}
 
 module "networking" {
   source = "./modules/networking"
@@ -87,33 +97,29 @@ module "networking" {
   region         = var.region
 }
 
-# ─── PostgreSQL ───────────────────────────────────────────────────────────────
-
 module "postgres" {
   source = "./modules/postgres"
 
   cloud_provider = var.cloud_provider
   environment    = var.environment
+  region         = var.region
   instance_class = var.postgres_instance_class
   vpc_id         = module.networking.vpc_id
   subnet_ids     = module.networking.private_subnet_ids
   security_group = module.networking.db_security_group_id
 }
 
-# ─── Redis ────────────────────────────────────────────────────────────────────
-
 module "redis" {
   source = "./modules/redis"
 
   cloud_provider = var.cloud_provider
   environment    = var.environment
+  region         = var.region
   node_type      = var.redis_node_type
   vpc_id         = module.networking.vpc_id
   subnet_ids     = module.networking.private_subnet_ids
   security_group = module.networking.redis_security_group_id
 }
-
-# ─── Object Storage ──────────────────────────────────────────────────────────
 
 module "storage" {
   source = "./modules/storage"
@@ -121,30 +127,43 @@ module "storage" {
   cloud_provider = var.cloud_provider
   environment    = var.environment
   region         = var.region
+  gcp_project_id = var.gcp_project_id
 }
-
-# ─── Compute (Kubernetes) ─────────────────────────────────────────────────────
 
 module "compute" {
   source = "./modules/compute"
 
-  cloud_provider          = var.cloud_provider
-  environment             = var.environment
-  region                  = var.region
-  cluster_name            = var.kubernetes_cluster_name
-  vpc_id                  = module.networking.vpc_id
-  subnet_ids              = module.networking.private_subnet_ids
+  cloud_provider             = var.cloud_provider
+  environment                = var.environment
+  region                     = var.region
+  gcp_project_id             = var.gcp_project_id
+  cluster_name               = var.kubernetes_cluster_name
+  vpc_id                     = module.networking.vpc_id
+  subnet_ids                 = module.networking.private_subnet_ids
+  storage_bucket_arn         = module.storage.bucket_arn
+  storage_bucket_name        = module.storage.bucket_name
+  kubernetes_namespace       = var.kubernetes_namespace
+  kubernetes_service_account = var.kubernetes_service_account
 }
-
-# ─── Outputs ──────────────────────────────────────────────────────────────────
 
 output "database_endpoint" {
   value     = module.postgres.endpoint
   sensitive = true
 }
 
+output "database_admin_secret" {
+  value     = module.postgres.admin_secret_id
+  sensitive = true
+}
+
 output "redis_endpoint" {
-  value = module.redis.endpoint
+  value     = module.redis.endpoint
+  sensitive = true
+}
+
+output "redis_auth_secret" {
+  value     = module.redis.auth_secret
+  sensitive = true
 }
 
 output "storage_bucket" {
@@ -152,5 +171,15 @@ output "storage_bucket" {
 }
 
 output "kubernetes_cluster" {
-  value = module.compute.cluster_endpoint
+  value     = module.compute.cluster_endpoint
+  sensitive = true
+}
+
+output "workload_identity" {
+  value     = module.compute.workload_identity
+  sensitive = true
+}
+
+output "domain" {
+  value = var.domain
 }

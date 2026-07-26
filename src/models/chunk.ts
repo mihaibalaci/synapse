@@ -7,6 +7,8 @@
  */
 
 import { z } from 'zod';
+import { ACLSchema } from './permissions.js';
+import { EnrichmentStatus, SearchableStatus } from './session.js';
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
@@ -93,8 +95,12 @@ export const ChunkSchema = z.object({
   authorId: z.string(),
   organizationId: z.string(),
   teamId: z.string().optional(),
+  /** Server-derived content ACL; omitted inputs receive an owner/org default. */
+  acl: ACLSchema.optional(),
 
   /** Quality & Lifecycle */
+  searchableStatus: SearchableStatus.optional(),
+  enrichmentStatus: EnrichmentStatus.optional(),
   confidence: ConfidenceLevel,
   qualityScore: z.number().min(0).max(1).default(0.5),
   usageCount: z.number().int().default(0),
@@ -126,6 +132,7 @@ export type Chunk = z.infer<typeof ChunkSchema>;
 
 export const ChunkClusterSchema = z.object({
   id: z.string().uuid(),
+  organizationId: z.string().min(1),
   canonicalChunkId: z.string().uuid(),      // The "best" representative
   memberChunkIds: z.array(z.string().uuid()),
   title: z.string(),

@@ -35,6 +35,16 @@ export const SessionStatus = z.enum([
 ]);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
+export const SearchableStatus = z.enum([
+  'pending', 'processing', 'searchable', 'blocked', 'failed',
+]);
+export type SearchableStatus = z.infer<typeof SearchableStatus>;
+
+export const EnrichmentStatus = z.enum([
+  'pending', 'not_required', 'processing', 'complete', 'partial', 'failed',
+]);
+export type EnrichmentStatus = z.infer<typeof EnrichmentStatus>;
+
 // ─── Message Schema ──────────────────────────────────────────────────────────
 
 export const CodeBlockSchema = z.object({
@@ -127,6 +137,8 @@ export type SessionUpload = z.infer<typeof SessionUploadSchema>;
 export const SessionRecordSchema = SessionUploadSchema.extend({
   id: z.string().uuid(),
   status: SessionStatus,
+  searchableStatus: SearchableStatus.optional(),
+  enrichmentStatus: EnrichmentStatus.optional(),
   rawStorageKey: z.string(),               // S3 key for immutable raw data
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

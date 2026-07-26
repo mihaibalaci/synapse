@@ -1,77 +1,16 @@
-# ══════════════════════════════════════════════════════════════════════════════
-# On-Premises Deployment Profile
-#
-# Everything runs inside the Kubernetes cluster:
-#   - Patroni Postgres cluster (3 nodes)
-#   - Redis cluster (3 nodes)
-#   - MinIO (S3-compatible, 4 nodes)
-#   - Self-hosted embedding (HuggingFace TEI)
-#   - Self-hosted LLM (Ollama) or no LLM (heuristic-only)
-#
-# Usage:
-#   helm install ctx ./deploy/helm/recall -f profiles/on-prem.yaml
-# ══════════════════════════════════════════════════════════════════════════════
-
-global:
-  profile: "on-prem"
-
-postgresql:
-  mode: "internal"
-  internal:
-    replicas: 3
-    storage: 200Gi
-
-redis:
-  mode: "internal"
-  internal:
-    replicas: 3
-
-objectStorage:
-  provider: "minio"
-  endpoint: "http://ctx-minio:9000"
-  minio:
-    enabled: true
-    replicas: 4
-    storage: 1Ti
-
+global: { profile: on-prem }
+# Patroni, Redis, MinIO, and model serving are separate lifecycle domains.
+postgresql: { mode: managed, host: "recall-patroni-primary.database.svc", port: 5432, database: recall }
+redis: { mode: managed, host: "recall-redis-primary.cache.svc", port: 6379, tls: true }
+objectStorage: { provider: minio, bucket: recall-raw, region: us-east-1, endpoint: "https://recall-minio.storage.svc:9000" }
 embedding:
-  provider: "tei"
-  selfHosted:
-    url: "http://ctx-embedding:8080"
-    model: "nomic-embed-text"
-    dimensions: 768
-    deploy: true
-    image: "ghcr.io/huggingface/text-embeddings-inference:cpu-latest"
-    model_id: "nomic-ai/nomic-embed-text-v1.5"
-    resources:
-      requests:
-        cpu: 4000m
-        memory: 4Gi
-      limits:
-        cpu: 8000m
-        memory: 8Gi
-
-llm:
-  provider: "ollama"
-  selfHosted:
-    url: "http://ctx-ollama:11434"
-    model: "llama3.1:8b"
-    deploy: true
-    resources:
-      requests:
-        memory: 16Gi
-      limits:
-        nvidia.com/gpu: 1
-
+  provider: tei
+  selfHosted: { url: "http://recall-embedding.models.svc:8080", model: recall-compatible-1536, dimensions: 1536 }
+llm: { provider: local-none, model: "", selfHosted: { url: "", model: "" } }
+auth: { issuer: "https://auth.internal.example.com", audience: recall }
+runtimeSecret: { name: recall-runtime }
 secrets:
-  provider: "vault"
-  vault:
-    address: "https://vault.internal.company.com"
-    role: "recall"
-    path: "secret/data/recall"
-
-serviceMesh:
-  enabled: true
-  type: "istio"
-  mtls:
-    mode: "STRICT"
+  provider: external-secrets
+  externalSecrets: { secretStore: vault, secretStoreKind: ClusterSecretStore, remoteKey: recall/prod/runtime, refreshInterval: 1h }
+migration: { enabled: true, secretName: recall-migrator, secretKey: DATABASE_URL, backoffLimit: 3 }
+serviceMesh: { enabled: true, type: istio, mtls: { mode: STRICT } }

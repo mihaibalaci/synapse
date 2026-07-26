@@ -12,11 +12,10 @@
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { v4 as uuidv4 } from 'uuid';
+import { v5 as uuidv5 } from 'uuid';
 import { SessionUploadSchema, type SessionUpload, type SessionRecord } from '../models/index.js';
 import { getConfig } from '../config/index.js';
 import { createChildLogger } from '../utils/logger.js';
-import { enqueueSession } from '../ingestion/queue.js';
 import { ObjectStorageClient } from '../storage/object-storage.js';
 import { SessionRepository } from '../storage/session-repository.js';
 
@@ -35,7 +34,13 @@ async function handleSessionUpload(
   const startTime = Date.now();
 
   // 1. Validate payload
-  const parseResult = SessionUploadSchema.safeParse(request.body);
+  const identity = request.authContext;
+  const parseResult = SessionUploadSchema.safeParse({
+    ...request.body,
+    developerId: identity.userId,
+    organizationId: identity.organizationId,
+    teamId: identity.teamIds[0],
+  });
   if (!parseResult.success) {
     logger.warn({ errors: parseResult.error.issues }, 'Invalid session upload payload');
     reply.status(400).send({
@@ -50,7 +55,27 @@ async function handleSessionUpload(
   }
 
   const payload = parseResult.data;
-  const sessionId = uuidv4();
+  const sessionRepo = new SessionRepository();
+  const existing = await sessionRepo.findByClientId(
+    payload.clientId,
+    payload.developerId,
+    payload.organizationId,
+  );
+  if (existing) {
+    reply.status(202).send({
+      sessionId: existing.id,
+      status: existing.status,
+      searchableStatus: existing.searchableStatus,
+      enrichmentStatus: existing.enrichmentStatus,
+      message: 'Session was already accepted',
+      trackingUrl: `/api/v1/sessions/${existing.id}/status`,
+    });
+    return;
+  }
+  const sessionId = uuidv5(
+    `${payload.organizationId}:${payload.developerId}:${payload.clientId}`,
+    'bf821a66-0d7d-4ff7-a5e2-d72131b94563',
+  );
   const config = getConfig();
 
   logger.info({
@@ -89,11 +114,7 @@ async function handleSessionUpload(
       processingAttempts: 0,
     };
 
-    const sessionRepo = new SessionRepository();
-    await sessionRepo.create(sessionRecord);
-
-    // 4. Enqueue for async processing
-    await enqueueSession({
+    await sessionRepo.createWithOutbox(sessionRecord, {
       sessionId,
       organizationId: payload.organizationId,
       developerId: payload.developerId,
@@ -147,6 +168,8 @@ async function handleSessionStatus(
   reply.send({
     sessionId: session.id,
     status: session.status,
+    searchableStatus: session.searchableStatus,
+    enrichmentStatus: session.enrichmentStatus,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     processingAttempts: session.processingAttempts,
@@ -176,26 +199,116 @@ async function handleBatchUpload(
     return;
   }
 
-  const results: Array<{ clientId: string; sessionId?: string; error?: string }> = [];
+  const identity = request.authContext;
+  const config = getConfig();
+  const now = new Date().toISOString();
+  const objectStorage = new ObjectStorageClient();
+  const results: Array<{ clientId: string; sessionId?: string; error?: string }> =
+    sessions.map(session => ({ clientId: session.clientId ?? 'unknown' }));
+  const prepared: Array<{
+    index: number;
+    payload: SessionUpload;
+    record: SessionRecord;
+    job: Parameters<SessionRepository['createWithOutbox']>[1];
+  }> = [];
 
-  for (const session of sessions) {
-    const parseResult = SessionUploadSchema.safeParse(session);
+  for (const [index, session] of sessions.entries()) {
+    const parseResult = SessionUploadSchema.safeParse({
+      ...session,
+      developerId: identity.userId,
+      organizationId: identity.organizationId,
+      teamId: identity.teamIds[0],
+    });
     if (!parseResult.success) {
-      results.push({
-        clientId: session.clientId ?? 'unknown',
-        error: parseResult.error.issues[0]?.message ?? 'Validation failed',
-      });
+      results[index].error = parseResult.error.issues[0]?.message ?? 'Validation failed';
       continue;
     }
 
-    // Process each valid session (simplified — in production, batch the S3/DB writes)
-    const sessionId = uuidv4();
-    results.push({ clientId: session.clientId, sessionId });
+    const payload = parseResult.data;
+    const existing = await new SessionRepository().findByClientId(
+      payload.clientId,
+      payload.developerId,
+      payload.organizationId,
+    );
+    if (existing) {
+      results[index].sessionId = existing.id;
+      continue;
+    }
+    const sessionId = uuidv5(
+      `${payload.organizationId}:${payload.developerId}:${payload.clientId}`,
+      'bf821a66-0d7d-4ff7-a5e2-d72131b94563',
+    );
+    const rawStorageKey = `sessions/${payload.organizationId}/${payload.developerId}/${sessionId}.json`;
+    prepared.push({
+      index,
+      payload,
+      record: {
+        ...payload,
+        id: sessionId,
+        status: 'uploaded',
+        searchableStatus: 'pending',
+        enrichmentStatus: 'pending',
+        rawStorageKey,
+        createdAt: now,
+        updatedAt: now,
+        processingAttempts: 0,
+      },
+      job: {
+        sessionId,
+        organizationId: payload.organizationId,
+        developerId: payload.developerId,
+        rawStorageKey,
+        totalTokens: payload.totalTokens,
+        messageCount: payload.messages.length,
+        priority: calculatePriority(payload),
+      },
+    });
+  }
+
+  const uploads = await Promise.allSettled(prepared.map(item => objectStorage.putObject(
+    config.S3_BUCKET,
+    item.record.rawStorageKey,
+    JSON.stringify(item.payload),
+    {
+      contentType: 'application/json',
+      metadata: {
+        sessionId: item.record.id,
+        developerId: item.record.developerId,
+        organizationId: item.record.organizationId,
+        provider: item.record.metadata.aiProvider,
+        uploadedAt: now,
+      },
+    },
+  )));
+
+  const durable: Array<{ session: SessionRecord; job: Parameters<SessionRepository['createWithOutbox']>[1] }> = [];
+  uploads.forEach((upload, preparedIndex) => {
+    const item = prepared[preparedIndex];
+    if (upload.status === 'rejected') {
+      results[item.index].error = upload.reason instanceof Error
+        ? upload.reason.message
+        : 'Object storage upload failed';
+    } else {
+      results[item.index].sessionId = item.record.id;
+      durable.push({ session: item.record, job: item.job });
+    }
+  });
+
+  try {
+    await new SessionRepository().createBatchWithOutbox(durable);
+  } catch (error) {
+    logger.error({ err: error, count: durable.length }, 'Batch database transaction failed');
+    for (const item of prepared) {
+      if (results[item.index].sessionId) {
+        delete results[item.index].sessionId;
+        results[item.index].error = 'Database transaction failed; retry with the same client ID';
+      }
+    }
   }
 
   reply.status(202).send({
-    accepted: results.filter(r => r.sessionId).length,
-    rejected: results.filter(r => r.error).length,
+    accepted: results.filter(result => result.sessionId).length,
+    rejected: results.filter(result => result.error).length,
     results,
   });
 }

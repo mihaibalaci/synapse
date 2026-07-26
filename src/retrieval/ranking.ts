@@ -22,20 +22,29 @@ import {
   type RankingWeights,
   type SearchRequest,
   type Chunk,
+  type MemoryFact,
 } from '../models/index.js';
 
 const logger = createChildLogger({ module: 'ranking' });
 
 // ─── Internal Types ──────────────────────────────────────────────────────────
 
-interface RankedCandidate {
+interface CandidateScores {
+  semantic: number;
+  keyword: number;
+  entityMatch: number;
+  temporal: number;
+  graphRelevance: number;
+}
+
+interface RankableCandidate {
   chunk: Chunk;
-  scores: {
-    semantic: number;
-    keyword: number;
-    graphRelevance: number;
-  };
-  source: string;
+  facts?: MemoryFact[];
+  scores: CandidateScores;
+  source: 'vector' | 'keyword' | 'entity' | 'temporal' | 'graph';
+}
+
+interface RankedCandidate extends RankableCandidate {
   finalScore: number;
   scoreBreakdown: {
     semanticContribution: number;
@@ -78,11 +87,7 @@ export class RankingEngine {
    * Returns candidates sorted by finalScore descending.
    */
   async rank(
-    candidates: Array<{
-      chunk: Chunk;
-      scores: { semantic: number; keyword: number; graphRelevance: number };
-      source: string;
-    }>,
+    candidates: RankableCandidate[],
     request: SearchRequest,
   ): Promise<RankedCandidate[]> {
     if (candidates.length === 0) return [];
@@ -117,11 +122,7 @@ export class RankingEngine {
    * Compute the composite score for a single candidate.
    */
   private computeCompositeScore(
-    candidate: {
-      chunk: Chunk;
-      scores: { semantic: number; keyword: number; graphRelevance: number };
-      source: string;
-    },
+    candidate: RankableCandidate,
     request: SearchRequest,
   ): RankedCandidate {
     const { chunk, scores } = candidate;

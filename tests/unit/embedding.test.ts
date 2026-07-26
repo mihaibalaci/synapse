@@ -8,6 +8,8 @@ vi.mock('../../src/config/index.js', () => ({
     EMBEDDING_MODEL: 'test-model',
     EMBEDDING_DIMENSIONS: 128,
     EMBEDDING_URL: '',
+    LOG_LEVEL: 'error',
+    NODE_ENV: 'test',
   }),
 }));
 

@@ -1,111 +1,71 @@
 /**
- * Search Index (OpenSearch)
+ * PostgreSQL full-text search adapter.
  *
- * BM25 full-text search for keyword-based retrieval.
- * Complements vector search — together they form hybrid retrieval.
- *
- * OpenSearch handles:
- *   - Keyword matching (exact terms, phrases)
- *   - Fuzzy search (typo tolerance)
- *   - Faceted filtering (by repo, language, type)
- *   - Highlighting (show which parts matched)
- *   - Aggregations (for analytics)
+ * Chunk text remains authoritative in the chunks table. search_index_entries
+ * tracks whether a persisted chunk is currently exposed to retrieval so index
+ * deletion never deletes source content.
  */
 
-import { getConfig } from '../config/index.js';
+import { query, withTransaction } from './database.js';
 import { createChildLogger } from '../utils/logger.js';
 import { type Chunk } from '../models/index.js';
 
 const logger = createChildLogger({ module: 'search-index' });
 
-// ─── Index Configuration ─────────────────────────────────────────────────────
+interface SearchRow {
+  [column: string]: unknown;
+  id: string;
+  score: number | string;
+  title_highlight: string | null;
+  summary_highlight: string | null;
+  content_highlight: string | null;
+}
 
-const CHUNK_INDEX = 'chunks';
-const KNOWLEDGE_INDEX = 'knowledge';
-
-const CHUNK_MAPPING = {
-  properties: {
-    id: { type: 'keyword' },
-    sessionId: { type: 'keyword' },
-    title: { type: 'text', analyzer: 'english', boost: 3 },
-    summary: { type: 'text', analyzer: 'english', boost: 2 },
-    content: { type: 'text', analyzer: 'english' },
-    type: { type: 'keyword' },
-    repository: { type: 'keyword' },
-    branch: { type: 'keyword' },
-    language: { type: 'keyword' },
-    languages: { type: 'keyword' },
-    frameworks: { type: 'keyword' },
-    authorId: { type: 'keyword' },
-    organizationId: { type: 'keyword' },
-    teamId: { type: 'keyword' },
-    confidence: { type: 'keyword' },
-    qualityScore: { type: 'float' },
-    usageCount: { type: 'integer' },
-    upvotes: { type: 'integer' },
-    entities: {
-      type: 'nested',
-      properties: {
-        name: { type: 'keyword' },
-        type: { type: 'keyword' },
-      },
-    },
-    createdAt: { type: 'date' },
-    updatedAt: { type: 'date' },
-  },
-};
-
-// ─── Search Index Client ─────────────────────────────────────────────────────
+interface SuggestionRow {
+  [column: string]: unknown;
+  title: string;
+}
 
 export class SearchIndex {
-  private baseUrl: string;
-
-  constructor() {
-    const config = getConfig();
-    this.baseUrl = config.OPENSEARCH_URL;
-  }
-
-  /**
-   * Initialize indexes with mappings.
-   */
+  /** Ensure PostgreSQL search membership and supporting indexes exist. */
   async initialize(): Promise<void> {
-    await this.createIndexIfNotExists(CHUNK_INDEX, CHUNK_MAPPING);
-    await this.createIndexIfNotExists(KNOWLEDGE_INDEX, CHUNK_MAPPING);
-    logger.info('Search indexes initialized');
+    await query(`CREATE EXTENSION IF NOT EXISTS "pg_trgm"`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS search_index_entries (
+        chunk_id UUID PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+        organization_id TEXT NOT NULL,
+        is_searchable BOOLEAN NOT NULL DEFAULT true,
+        indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_search_entries_org
+      ON search_index_entries(organization_id, is_searchable)
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_chunks_title_trgm ON chunks USING gin(title gin_trgm_ops)`);
+    logger.info('PostgreSQL full-text search initialized');
   }
 
-  /**
-   * Index a chunk for full-text search.
-   */
+  /** Expose an already-persisted chunk through the PostgreSQL search index. */
   async indexChunk(chunk: Chunk): Promise<void> {
-    await this.indexDocument(CHUNK_INDEX, chunk.id, {
-      id: chunk.id,
-      sessionId: chunk.sessionId,
-      title: chunk.title,
-      summary: chunk.summary,
-      content: chunk.content,
-      type: chunk.type,
-      repository: chunk.repository,
-      branch: chunk.branch,
-      language: chunk.language,
-      languages: chunk.languages,
-      frameworks: chunk.frameworks,
-      authorId: chunk.authorId,
-      organizationId: chunk.organizationId,
-      teamId: chunk.teamId,
-      confidence: chunk.confidence,
-      qualityScore: chunk.qualityScore,
-      usageCount: chunk.usageCount,
-      upvotes: chunk.upvotes,
-      entities: chunk.entities,
-      createdAt: chunk.createdAt,
-      updatedAt: chunk.updatedAt,
-    });
+    const result = await query(
+      `INSERT INTO search_index_entries (chunk_id, organization_id, is_searchable, indexed_at)
+       SELECT id, organization_id, true, NOW()
+       FROM chunks
+       WHERE id = $1 AND organization_id = $2
+       ON CONFLICT (chunk_id) DO UPDATE SET
+         organization_id = EXCLUDED.organization_id,
+         is_searchable = true,
+         indexed_at = NOW()`,
+      [chunk.id, chunk.organizationId],
+    );
+
+    if (result.rowCount !== 1) {
+      throw new Error(`Cannot index missing chunk ${chunk.id}`);
+    }
   }
 
-  /**
-   * BM25 keyword search with metadata filtering.
-   */
+  /** Ranked PostgreSQL FTS with trigram fallback and parameterized filters. */
   async search(params: {
     query: string;
     organizationId: string;
@@ -118,219 +78,165 @@ export class SearchIndex {
     limit?: number;
     offset?: number;
   }): Promise<Array<{ id: string; score: number; highlights: Record<string, string[]> }>> {
-    const { query, organizationId, filters, limit = 50, offset = 0 } = params;
+    const {
+      query: searchText,
+      organizationId,
+      filters,
+      limit = 50,
+      offset = 0,
+    } = params;
 
-    // Build OpenSearch query
-    const must: unknown[] = [
-      {
-        multi_match: {
-          query,
-          fields: ['title^3', 'summary^2', 'content', 'entities.name^2'],
-          type: 'best_fields',
-          fuzziness: 'AUTO',
-        },
-      },
-      { term: { organizationId } },
+    if (!searchText.trim()) return [];
+
+    const values: unknown[] = [searchText, organizationId];
+    const predicates = [
+      's.organization_id = $2',
+      's.is_searchable = true',
+      `(c.search_vector @@ q.value
+        OR c.title % $1
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements(c.entities) AS entity
+          WHERE entity->>'name' ILIKE '%' || $1 || '%'
+        ))`,
     ];
 
-    // Apply filters
-    const filterClauses: unknown[] = [];
-    if (filters?.repositories?.length) {
-      filterClauses.push({ terms: { repository: filters.repositories } });
-    }
-    if (filters?.languages?.length) {
-      filterClauses.push({ terms: { language: filters.languages } });
-    }
-    if (filters?.types?.length) {
-      filterClauses.push({ terms: { type: filters.types } });
-    }
-    if (filters?.minQualityScore) {
-      filterClauses.push({ range: { qualityScore: { gte: filters.minQualityScore } } });
-    }
-
-    const body = {
-      query: {
-        bool: {
-          must,
-          filter: filterClauses,
-        },
-      },
-      highlight: {
-        fields: {
-          title: {},
-          summary: {},
-          content: { fragment_size: 150, number_of_fragments: 3 },
-        },
-      },
-      from: offset,
-      size: limit,
+    const addArrayFilter = (sql: string, value?: string[]): void => {
+      if (!value?.length) return;
+      values.push(value);
+      const parameter = `$${values.length}`;
+      predicates.push(sql.split('?').join(parameter));
     };
 
-    try {
-      const response = await this.request('POST', `/${CHUNK_INDEX}/_search`, body);
-      const hits = response.hits?.hits ?? [];
+    addArrayFilter('c.repository = ANY(?::text[])', filters?.repositories);
+    addArrayFilter('(c.language = ANY(?::text[]) OR c.languages && ?::text[])', filters?.languages);
+    addArrayFilter('c.type = ANY(?::text[])', filters?.types);
 
-      return hits.map((hit: any) => ({
-        id: hit._id,
-        score: hit._score,
-        highlights: hit.highlight ?? {},
-      }));
+    if (filters?.minQualityScore !== undefined) {
+      values.push(filters.minQualityScore);
+      predicates.push(`c.quality_score >= $${values.length}`);
+    }
+
+    values.push(Math.max(1, Math.min(limit, 100)));
+    const limitParameter = `$${values.length}`;
+    values.push(Math.max(0, offset));
+    const offsetParameter = `$${values.length}`;
+
+    try {
+      const result = await query<SearchRow>(
+        `WITH q AS (
+           SELECT websearch_to_tsquery('english', $1) AS value
+         )
+         SELECT
+           c.id::text,
+           (ts_rank_cd(c.search_vector, q.value, 32)
+             + similarity(c.title, $1) * 0.15
+             + CASE WHEN EXISTS (
+                 SELECT 1 FROM jsonb_array_elements(c.entities) AS entity
+                 WHERE entity->>'name' ILIKE '%' || $1 || '%'
+               ) THEN 0.2 ELSE 0 END) AS score,
+           CASE WHEN to_tsvector('english', c.title) @@ q.value
+             THEN ts_headline('english', c.title, q.value,
+               'StartSel=<mark>, StopSel=</mark>, MaxFragments=1') END AS title_highlight,
+           CASE WHEN to_tsvector('english', c.summary) @@ q.value
+             THEN ts_headline('english', c.summary, q.value,
+               'StartSel=<mark>, StopSel=</mark>, MaxFragments=2') END AS summary_highlight,
+           CASE WHEN to_tsvector('english', c.content) @@ q.value
+             THEN ts_headline('english', c.content, q.value,
+               'StartSel=<mark>, StopSel=</mark>, MaxFragments=3, MaxWords=35, MinWords=10') END AS content_highlight
+         FROM chunks c
+         JOIN search_index_entries s ON s.chunk_id = c.id
+         CROSS JOIN q
+         WHERE ${predicates.join('\n           AND ')}
+         ORDER BY score DESC, c.updated_at DESC
+         LIMIT ${limitParameter} OFFSET ${offsetParameter}`,
+        values,
+      );
+
+      return result.rows.map(row => {
+        const highlights: Record<string, string[]> = {};
+        if (row.title_highlight) highlights.title = [row.title_highlight];
+        if (row.summary_highlight) highlights.summary = [row.summary_highlight];
+        if (row.content_highlight) highlights.content = [row.content_highlight];
+        return { id: row.id, score: Number(row.score), highlights };
+      });
     } catch (error) {
-      logger.error({ err: error, query }, 'OpenSearch query failed');
+      logger.error({ err: error, query: searchText }, 'PostgreSQL full-text query failed');
       return [];
     }
   }
 
-  /**
-   * Bulk index multiple chunks (for batch processing).
-   */
+  /** Add multiple persisted chunks to the index in one transaction. */
   async bulkIndex(chunks: Chunk[]): Promise<{ indexed: number; errors: number }> {
     if (chunks.length === 0) return { indexed: 0, errors: 0 };
 
-    const operations: string[] = [];
-    for (const chunk of chunks) {
-      operations.push(JSON.stringify({ index: { _index: CHUNK_INDEX, _id: chunk.id } }));
-      operations.push(JSON.stringify({
-        id: chunk.id,
-        sessionId: chunk.sessionId,
-        title: chunk.title,
-        summary: chunk.summary,
-        content: chunk.content,
-        type: chunk.type,
-        repository: chunk.repository,
-        language: chunk.language,
-        languages: chunk.languages,
-        frameworks: chunk.frameworks,
-        authorId: chunk.authorId,
-        organizationId: chunk.organizationId,
-        confidence: chunk.confidence,
-        qualityScore: chunk.qualityScore,
-        usageCount: chunk.usageCount,
-        entities: chunk.entities,
-        createdAt: chunk.createdAt,
-      }));
-    }
-
-    const body = operations.join('\n') + '\n';
-
+    const uniqueChunks = [...new Map(chunks.map(chunk => [chunk.id, chunk])).values()];
     try {
-      const response = await this.request('POST', '/_bulk', body, 'application/x-ndjson');
-      const errors = response.errors ? response.items.filter((i: any) => i.index?.error).length : 0;
-      return { indexed: chunks.length - errors, errors };
+      const indexed = await withTransaction(async client => {
+        let count = 0;
+        for (const chunk of uniqueChunks) {
+          const result = await client.query(
+            `INSERT INTO search_index_entries (chunk_id, organization_id, is_searchable, indexed_at)
+             SELECT id, organization_id, true, NOW()
+             FROM chunks
+             WHERE id = $1 AND organization_id = $2
+             ON CONFLICT (chunk_id) DO UPDATE SET
+               organization_id = EXCLUDED.organization_id,
+               is_searchable = true,
+               indexed_at = NOW()`,
+            [chunk.id, chunk.organizationId],
+          );
+          count += result.rowCount ?? 0;
+        }
+        return count;
+      });
+      return { indexed, errors: chunks.length - indexed };
     } catch (error) {
-      logger.error({ err: error, count: chunks.length }, 'Bulk index failed');
+      logger.error({ err: error, count: chunks.length }, 'Bulk PostgreSQL indexing failed');
       return { indexed: 0, errors: chunks.length };
     }
   }
 
-  /**
-   * Delete a chunk from the index.
-   */
+  /** Hide a chunk from search without deleting the persisted chunk. */
   async deleteChunk(chunkId: string): Promise<void> {
-    await this.request('DELETE', `/${CHUNK_INDEX}/_doc/${chunkId}`);
+    await query(
+      `UPDATE search_index_entries
+       SET is_searchable = false, indexed_at = NOW()
+       WHERE chunk_id = $1`,
+      [chunkId],
+    );
   }
 
-  /**
-   * Get search suggestions (autocomplete).
-   */
+  /** Prefix/trigram title suggestions scoped to one organization. */
   async suggest(prefix: string, organizationId: string, limit: number = 5): Promise<string[]> {
-    const body = {
-      query: {
-        bool: {
-          must: [
-            { match_phrase_prefix: { title: { query: prefix, max_expansions: 10 } } },
-            { term: { organizationId } },
-          ],
-        },
-      },
-      _source: ['title'],
-      size: limit,
-    };
+    if (!prefix.trim()) return [];
 
     try {
-      const response = await this.request('POST', `/${CHUNK_INDEX}/_search`, body);
-      return (response.hits?.hits ?? []).map((h: any) => h._source.title);
-    } catch {
+      const result = await query<SuggestionRow>(
+        `SELECT DISTINCT c.title
+         FROM chunks c
+         JOIN search_index_entries s ON s.chunk_id = c.id
+         WHERE s.organization_id = $2
+           AND s.is_searchable = true
+           AND (c.title ILIKE $1 || '%' OR c.title % $1)
+         ORDER BY c.title
+         LIMIT $3`,
+        [prefix, organizationId, Math.max(1, Math.min(limit, 20))],
+      );
+      return result.rows.map(row => row.title);
+    } catch (error) {
+      logger.warn({ err: error, prefix }, 'PostgreSQL suggestion query failed');
       return [];
     }
   }
-
-  // ─── HTTP Helpers ──────────────────────────────────────────────────────────
-
-  private async createIndexIfNotExists(index: string, mapping: unknown): Promise<void> {
-    try {
-      const exists = await this.request('HEAD', `/${index}`);
-      if (exists) return;
-    } catch {
-      // Index doesn't exist, create it
-    }
-
-    try {
-      await this.request('PUT', `/${index}`, {
-        settings: {
-          number_of_shards: 3,
-          number_of_replicas: 1,
-          analysis: {
-            analyzer: {
-              code_analyzer: {
-                type: 'custom',
-                tokenizer: 'standard',
-                filter: ['lowercase', 'word_delimiter_graph'],
-              },
-            },
-          },
-        },
-        mappings: mapping,
-      });
-      logger.info({ index }, 'Search index created');
-    } catch (error) {
-      logger.warn({ err: error, index }, 'Failed to create index (may already exist)');
-    }
-  }
-
-  private async indexDocument(index: string, id: string, doc: unknown): Promise<void> {
-    await this.request('PUT', `/${index}/_doc/${id}`, doc);
-  }
-
-  private async request(method: string, path: string, body?: unknown, contentType?: string): Promise<any> {
-    const url = `${this.baseUrl}${path}`;
-
-    const options: RequestInit = {
-      method,
-      headers: {
-        'Content-Type': contentType ?? 'application/json',
-      },
-    };
-
-    if (body && method !== 'HEAD' && method !== 'GET') {
-      options.body = typeof body === 'string' ? body : JSON.stringify(body);
-    }
-
-    const response = await fetch(url, options);
-
-    if (method === 'HEAD') return response.ok;
-    if (!response.ok && response.status !== 404) {
-      const text = await response.text();
-      throw new Error(`OpenSearch ${method} ${path} failed: ${response.status} ${text}`);
-    }
-
-    return response.json();
-  }
 }
-
-// ─── Health Check ────────────────────────────────────────────────────────────
 
 export async function checkSearchHealth(): Promise<{ healthy: boolean; latencyMs: number }> {
   const start = Date.now();
-  const config = getConfig();
-
   try {
-    const response = await fetch(`${config.OPENSEARCH_URL}/_cluster/health`);
-    const data = await response.json() as any;
-    return {
-      healthy: data.status === 'green' || data.status === 'yellow',
-      latencyMs: Date.now() - start,
-    };
+    const result = await query<{ [column: string]: unknown; ready: boolean }>(
+      `SELECT to_regclass('public.search_index_entries') IS NOT NULL AS ready`,
+    );
+    return { healthy: result.rows[0]?.ready === true, latencyMs: Date.now() - start };
   } catch {
     return { healthy: false, latencyMs: Date.now() - start };
   }

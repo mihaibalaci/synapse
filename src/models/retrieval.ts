@@ -53,9 +53,12 @@ export const SearchRequestSchema = z.object({
   /** Whether to include full content or just summaries */
   includeContent: z.boolean().default(true),
 
-  /** Developer identity for permission filtering */
+  /** Identity and authorization context injected from verified JWT claims. */
   developerId: z.string(),
   organizationId: z.string(),
+  teamIds: z.array(z.string()).default([]),
+  roles: z.array(z.string()).default([]),
+  repositoryAccess: z.array(z.string()).default([]),
 });
 export type SearchRequest = z.infer<typeof SearchRequestSchema>;
 
@@ -149,9 +152,8 @@ export const FeedbackEventSchema = z.object({
   id: z.string().uuid(),
   searchId: z.string().uuid(),        // Which search produced this result
   resultId: z.string().uuid(),        // Which result is being rated
+  organizationId: z.string().optional(),
   developerId: z.string(),
-
-  /** What happened */
   action: z.enum([
     'shown',           // Result was displayed to user
     'clicked',         // User expanded/viewed the result

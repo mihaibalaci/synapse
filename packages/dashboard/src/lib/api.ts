@@ -5,10 +5,14 @@
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
 
 export async function api(path: string, options?: RequestInit): Promise<any> {
+  const token = typeof window !== 'undefined'
+    ? window.localStorage.getItem('recall_token')
+    : process.env.NEXT_PUBLIC_RECALL_TOKEN;
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
   });
@@ -25,8 +29,6 @@ export async function searchKnowledge(query: string, opts?: { repo?: string; lan
       topK: opts?.limit ?? 10,
       strategy: 'hybrid',
       includeContent: true,
-      developerId: 'dashboard',
-      organizationId: 'default',
     }),
   });
 }
@@ -53,7 +55,6 @@ export async function submitFeedback(resultId: string, action: string) {
     body: JSON.stringify({
       searchId: crypto.randomUUID(),
       resultId,
-      developerId: 'dashboard',
       action,
     }),
   });

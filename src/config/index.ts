@@ -28,23 +28,15 @@ const ConfigSchema = z.object({
   // Queue (BullMQ uses Redis)
   QUEUE_CONCURRENCY: z.coerce.number().default(10),
 
-  // Vector DB
-  VECTOR_DB_URL: z.string().default('postgresql://postgres:postgres@localhost:5432/recall'),
-
-  // Neo4j
-  NEO4J_URI: z.string().default('bolt://localhost:7687'),
-  NEO4J_USER: z.string().default('neo4j'),
-  NEO4J_PASSWORD: z.string().default('password'),
-
-  // OpenSearch
-  OPENSEARCH_URL: z.string().default('http://localhost:9200'),
-
   // Embedding (multi-provider: openai, ollama, vllm, tei, local)
   EMBEDDING_PROVIDER: z.enum(['openai', 'ollama', 'vllm', 'tei', 'local']).default('local'),
   EMBEDDING_URL: z.string().default('http://localhost:8080'),  // For self-hosted (ollama/vllm/tei)
   OPENAI_API_KEY: z.string().optional(),
   EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
-  EMBEDDING_DIMENSIONS: z.coerce.number().default(1536),
+  EMBEDDING_DIMENSIONS: z.coerce.number().refine(
+    value => value === 1536,
+    'Recall requires one globally consistent 1536-dimensional embedding space',
+  ).default(1536),
 
   // LLM (multi-provider: claude, openai, ollama, vllm, local-none)
   LLM_PROVIDER: z.enum(['claude', 'openai', 'ollama', 'vllm', 'local-none']).default('local-none'),
@@ -55,6 +47,8 @@ const ConfigSchema = z.object({
   // Auth
   AUTH_ISSUER: z.string().default('https://auth.company.com'),
   AUTH_AUDIENCE: z.string().default('recall'),
+  AUTH_JWT_SECRET: z.string().min(32).optional(),
+  AUTH_JWT_PUBLIC_KEY: z.string().optional(),
 
   // Rate Limiting
   RATE_LIMIT_MAX: z.coerce.number().default(100),
@@ -65,10 +59,13 @@ export type AppConfig = z.infer<typeof ConfigSchema>;
 
 let _config: AppConfig | null = null;
 
-export function loadConfig(): AppConfig {
-  if (_config) return _config;
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  forceReload: boolean = false,
+): AppConfig {
+  if (_config && !forceReload) return _config;
 
-  const result = ConfigSchema.safeParse(process.env);
+  const result = ConfigSchema.safeParse(env);
   if (!result.success) {
     console.error('Invalid configuration:', result.error.format());
     throw new Error(`Configuration validation failed: ${result.error.message}`);

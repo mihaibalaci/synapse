@@ -2,15 +2,17 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}-worker
-  labels:
-    app.kubernetes.io/name: recall
-    app.kubernetes.io/component: worker
+  labels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: worker }
 spec:
+  {{- if not .Values.worker.autoscaling.enabled }}
   replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 1, maxSurge: 1 }
   selector:
-    matchLabels:
-      app.kubernetes.io/name: recall
-      app.kubernetes.io/component: worker
+    matchLabels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: worker }
   template:
     metadata:
       labels:
@@ -20,56 +22,62 @@ spec:
         sidecar.istio.io/inject: "true"
         {{- end }}
     spec:
+      serviceAccountName: {{ include "recall.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       {{- with .Values.global.imagePullSecrets }}
-      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
       {{- end }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: worker }
       containers:
         - name: worker
-          image: "{{ .Values.global.imageRegistry }}{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          image: {{ include "recall.image" (dict "root" . "image" .Values.worker.image) | quote }}
           imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          envFrom:
+            - secretRef: { name: {{ include "recall.runtimeSecretName" . }} }
           env:
-            - name: NODE_ENV
-              value: "production"
-            - name: QUEUE_CONCURRENCY
-              value: "{{ .Values.worker.env.QUEUE_CONCURRENCY }}"
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-db-credentials
-                  key: url
-            - name: REDIS_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-redis-credentials
-                  key: url
-            - name: S3_BUCKET
-              value: "{{ .Values.objectStorage.bucket }}"
-            - name: S3_ENDPOINT
-              value: "{{ .Values.objectStorage.endpoint }}"
-            - name: S3_REGION
-              value: "{{ .Values.objectStorage.region }}"
-            - name: EMBEDDING_PROVIDER
-              value: "{{ .Values.embedding.provider }}"
-            - name: EMBEDDING_MODEL
-              value: "{{ if eq .Values.embedding.provider "openai" }}{{ .Values.embedding.openai.model }}{{ else }}{{ .Values.embedding.selfHosted.model }}{{ end }}"
-            - name: EMBEDDING_DIMENSIONS
-              value: "{{ if eq .Values.embedding.provider "openai" }}{{ .Values.embedding.openai.dimensions }}{{ else }}{{ .Values.embedding.selfHosted.dimensions }}{{ end }}"
-            {{- if ne .Values.embedding.provider "openai" }}
-            - name: EMBEDDING_URL
-              value: "{{ .Values.embedding.selfHosted.url }}"
-            {{- end }}
-            - name: LLM_PROVIDER
-              value: "{{ .Values.llm.provider }}"
-            {{- if .Values.llm.selfHosted.url }}
-            - name: LLM_URL
-              value: "{{ .Values.llm.selfHosted.url }}"
-            {{- end }}
-            {{- if .Values.observability.otel.enabled }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "{{ .Values.observability.otel.endpoint }}"
-            {{- end }}
-          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+            - { name: NODE_ENV, value: "production" }
+            - { name: LOG_LEVEL, value: {{ .Values.api.env.LOG_LEVEL | quote }} }
+            - { name: QUEUE_CONCURRENCY, value: {{ .Values.worker.env.QUEUE_CONCURRENCY | quote }} }
+            - { name: S3_BUCKET, value: {{ .Values.objectStorage.bucket | quote }} }
+            - { name: S3_REGION, value: {{ .Values.objectStorage.region | quote }} }
+            - { name: S3_ENDPOINT, value: {{ .Values.objectStorage.endpoint | quote }} }
+            - { name: EMBEDDING_PROVIDER, value: {{ .Values.embedding.provider | quote }} }
+            - { name: EMBEDDING_MODEL, value: {{ ternary .Values.embedding.openai.model .Values.embedding.selfHosted.model (eq .Values.embedding.provider "openai") | quote }} }
+            - { name: EMBEDDING_DIMENSIONS, value: "1536" }
+            - { name: EMBEDDING_URL, value: {{ .Values.embedding.selfHosted.url | quote }} }
+            - { name: LLM_PROVIDER, value: {{ .Values.llm.provider | quote }} }
+            - { name: LLM_MODEL, value: {{ .Values.llm.model | default .Values.llm.selfHosted.model | default "" | quote }} }
+            - { name: LLM_URL, value: {{ .Values.llm.selfHosted.url | quote }} }
+            - { name: WORKER_HEALTH_PORT, value: {{ .Values.worker.healthPort | quote }} }
+            - { name: WORKER_HEARTBEAT_STALE_MS, value: {{ .Values.worker.heartbeatStaleMs | quote }} }
+          ports:
+            - { name: health, containerPort: {{ .Values.worker.healthPort }}, protocol: TCP }
+          resources: {{ toYaml .Values.worker.resources | nindent 12 }}
+          startupProbe:
+            httpGet: { path: /health/ready, port: health }
+            periodSeconds: 5
+            failureThreshold: 24
+          # A hung worker stops refreshing its dispatch heartbeat and is restarted.
           livenessProbe:
-            exec:
-              command: ["node", "-e", "process.exit(0)"]
-            periodSeconds: 30
+            httpGet: { path: /health, port: health }
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /health/ready, port: health }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3

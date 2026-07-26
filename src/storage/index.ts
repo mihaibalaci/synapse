@@ -2,11 +2,9 @@
  * Storage Layer Index
  *
  * Re-exports all storage components for convenient importing.
- * The system uses polyglot persistence:
- *   - PostgreSQL (pgvector) → chunks, knowledge, sessions, metadata
- *   - S3 → raw immutable session data
- *   - Neo4j → relationship graph
- *   - OpenSearch → BM25 full-text search
+ * The mandatory stores are:
+ *   - PostgreSQL (pgvector + FTS + relational graph) → derived knowledge
+ *   - S3/MinIO → raw immutable session data
  *   - Redis → cache, queues, rate limiting
  */
 
@@ -28,15 +26,19 @@ export { SessionRepository } from './session-repository.js';
 export { ChunkRepository } from './chunk-repository.js';
 export { KnowledgeRepository } from './knowledge-repository.js';
 export { ClusterRepository } from './cluster-repository.js';
+export { CaptureRepository } from './capture-repository.js';
+export { FactRepository } from './fact-repository.js';
+export { OutboxRepository } from './outbox-repository.js';
+export { ProcessingStatusRepository } from './processing-status-repository.js';
 
-// Graph (Neo4j)
+// Graph (PostgreSQL relational tables)
 export {
   GraphRepository,
   checkGraphHealth,
   closeGraph,
 } from './graph-repository.js';
 
-// Search Index (OpenSearch)
+// Search Index (PostgreSQL FTS + pg_trgm)
 export {
   SearchIndex,
   checkSearchHealth,

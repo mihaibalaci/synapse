@@ -75,3 +75,25 @@ PostgreSQL replaces Neo4j, OpenSearch, and standalone vector DB via extensions:
 1. **Keep all 5 stores** — Maximum performance, maximum complexity. Rejected: ops burden too high for team size.
 2. **Postgres + OpenSearch (drop Neo4j)** — Graph is the least-used feature. Considered but AGE is good enough and eliminates another cluster.
 3. **Postgres + Pinecone (managed vector)** — Would remove pgvector tuning burden but adds vendor lock-in and network latency for vector search. Rejected: pgvector performance is sufficient with proper indexing.
+
+---
+
+## Amendment (implementation outcome)
+
+The decision to consolidate onto PostgreSQL stands and is implemented. Two
+details of this ADR were **not** carried out as written:
+
+1. **Apache AGE was not adopted.** The knowledge graph is implemented as
+   organization-scoped relational tables — `graph_nodes`, `graph_edges`, and
+   `chunk_entities` — with composite foreign keys, recursive cycle-safe
+   expansion, and forced row-level security. This avoids a non-core extension
+   that is unavailable on Aurora and Cloud SQL, and it keeps tenant isolation
+   enforceable by the same RLS mechanism as every other table. Cypher and AGE
+   Viewer are therefore not applicable; graph queries are SQL.
+2. **Full-text search uses `tsvector` plus `pg_trgm`,** with search membership
+   tracked separately in `search_index_entries` so indexing state is independent
+   of chunk persistence.
+
+The cost conclusions are unchanged. The "re-introduce OpenSearch beyond 500M
+chunks" consequence remains an open, untested assumption: no load test at that
+scale has been performed.
