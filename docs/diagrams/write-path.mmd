@@ -1,0 +1,57 @@
+%%{init: {'theme': 'base'}}%%
+
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant A as API Pod
+    participant S3 as Object Storage
+    participant PG as PostgreSQL
+    participant RD as Redis / BullMQ
+    participant W as Worker Pod
+    participant EMB as Embedding Server
+
+    rect rgb(30, 41, 59)
+    Note over C,A: Synchronous — ends at 202
+    C->>A: POST /api/v1/sessions<br/>Bearer JWT
+    A->>A: jwtVerify + rate limit + set RLS context
+    A->>PG: Idempotency check<br/>(org, developer, client_id)
+    alt session exists
+        PG-->>A: existing record
+        A-->>C: 202 + trackingUrl (no-op)
+    end
+    A->>A: sessionId = uuidv5(org:dev:clientId)
+    A->>S3: PUT raw payload<br/>IfNoneMatch='*', SHA-256
+    A->>PG: BEGIN → INSERT session + INSERT outbox → COMMIT
+    A-->>C: 202 Accepted + trackingUrl
+    end
+
+    rect rgb(45, 27, 105)
+    Note over W,PG: Asynchronous — durable via outbox
+    loop every 1 second
+        W->>PG: Claim outbox batch<br/>FOR UPDATE SKIP LOCKED
+        W->>RD: Publish with deterministic jobId
+        W->>PG: Mark published
+    end
+
+    RD->>W: session.process job
+    W->>S3: GET raw payload
+    W->>W: Parse → Segment → Governance gate
+    W->>EMB: embedBatch (1536d)
+    W->>PG: BEGIN → INSERT chunks + actions + outbox → COMMIT
+
+    par Per-action enrichment (5 parallel)
+        W->>PG: index → search_index_entries
+        W->>PG: facts → memory_facts
+        W->>PG: knowledge → knowledge_records
+        W->>PG: deduplicate → chunk_clusters
+        W->>PG: graph → graph_nodes/edges
+    end
+
+    W->>PG: Lock chunk → mark terminal → reconcile projection
+    end
+
+    rect rgb(30, 41, 59)
+    Note over C,A: Client polls for completion
+    C->>A: GET /api/v1/sessions/:id/status
+    A-->>C: searchableStatus + enrichmentStatus
+    end

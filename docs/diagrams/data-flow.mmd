@@ -1,0 +1,129 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'lineColor': '#4a9eff', 'secondaryColor': '#16213e'}}}%%
+
+flowchart TB
+    %% ═══════════════════════════════════════════════════════════════════
+    %% RECALL — Complete Data Flow
+    %% ═══════════════════════════════════════════════════════════════════
+
+    %% ─── Clients ─────────────────────────────────────────────────────
+    subgraph CLIENTS["👩‍💻 Clients"]
+        direction LR
+        IDE["IDE Plugin<br/>(Kiro, Cursor, VS Code)"]
+        MCP["MCP Server<br/>(stdio)"]
+        CLI["CLI"]
+        SLACK["Slack Bot"]
+        DASH["Dashboard"]
+    end
+
+    %% ─── Ingress ─────────────────────────────────────────────────────
+    ING{{"Ingress<br/>TLS termination<br/>nginx / ALB / GCE"}}
+
+    %% ─── API Layer ───────────────────────────────────────────────────
+    subgraph API_LAYER["API Pods (3-20 replicas)"]
+        direction TB
+        AUTH["JWT Verify<br/>issuer + audience + alg"]
+        RATE["Rate Limit<br/>per userId"]
+        RLS_CTX["Set RLS Context<br/>AsyncLocalStorage"]
+        ROUTES["Routes<br/>/sessions /search /facts<br/>/capture /feedback"]
+        HEALTH_API["/health/ready<br/>checks all deps"]
+    end
+
+    %% ─── Data Stores ─────────────────────────────────────────────────
+    subgraph STORES["Data Stores"]
+        direction LR
+        PG[("PostgreSQL 16<br/>pgvector + FTS + graph<br/>RLS + outbox")]
+        RD[("Redis<br/>BullMQ queues<br/>search cache<br/>noeviction")]
+        S3[("Object Storage<br/>immutable raw sessions<br/>SHA-256 verified")]
+    end
+
+    %% ─── Worker Layer ────────────────────────────────────────────────
+    subgraph WORKER_LAYER["Worker Pods (3-30 replicas)"]
+        direction TB
+        DISPATCH["Outbox Dispatcher<br/>1s poll, never rejects<br/>heartbeat → liveness"]
+        PIPELINE["Pipeline Worker<br/>parse → segment → embed"]
+        ENRICHMENT["Enrichment Workers<br/>facts • knowledge • dedup<br/>graph • search index"]
+        SWEEP["Drift Sweeper<br/>30s, repairs projections"]
+        HEALTH_W[":3001/health<br/>heartbeat freshness"]
+    end
+
+    %% ─── External AI ─────────────────────────────────────────────────
+    subgraph AI["AI Providers"]
+        direction LR
+        EMB["Embedding<br/>TEI / Ollama / OpenAI<br/>1536 dimensions"]
+        LLM["LLM<br/>Claude / OpenAI / Ollama<br/>extraction + synthesis"]
+    end
+
+    %% ─── Compaction ──────────────────────────────────────────────────
+    subgraph COMPACT["Compaction CronJob (weekly)"]
+        direction TB
+        SYNTH["Cluster Synthesis<br/>LLM → canonical article<br/>re-embed + demote"]
+        SUPERSEDE["Fact Supersession<br/>LLM contradiction check<br/>temporal_valid_until"]
+        PRUNE["Stale Archival<br/>confidence = archived"]
+    end
+
+    %% ─── Migration ──────────────────────────────────────────────────
+    MIG["Migration Job<br/>pre-install/pre-upgrade<br/>advisory-locked SQL"]
+
+    %% ═══════════════════════════════════════════════════════════════════
+    %% CONNECTIONS
+    %% ═══════════════════════════════════════════════════════════════════
+
+    %% Client → API
+    CLIENTS -->|"HTTPS + Bearer JWT"| ING
+    ING --> API_LAYER
+    AUTH --> RATE --> RLS_CTX --> ROUTES
+
+    %% API → Stores (read path)
+    ROUTES -->|"vector ANN + FTS + entity<br/>3 parallel signals"| PG
+    ROUTES -->|"cache GET/SETEX<br/>SHA-256 key with ACL"| RD
+    ROUTES -->|"PUT raw session<br/>IfNoneMatch + SHA-256"| S3
+
+    %% API → Stores (write path)
+    ROUTES -->|"BEGIN<br/>INSERT session + outbox<br/>COMMIT"| PG
+
+    %% Worker ↔ Stores
+    DISPATCH -->|"claim batch<br/>FOR UPDATE SKIP LOCKED"| PG
+    DISPATCH -->|"publish with<br/>deterministic jobId"| RD
+    PIPELINE -->|"GET raw payload"| S3
+    PIPELINE -->|"INSERT chunks + actions<br/>+ outbox events"| PG
+    ENRICHMENT -->|"facts • knowledge<br/>graph • search_index"| PG
+    ENRICHMENT -->|"lock chunk row<br/>reconcile projection"| PG
+
+    %% Worker → AI
+    PIPELINE -->|"embedBatch<br/>1536d"| EMB
+    ENRICHMENT -->|"heuristic extraction<br/>(LLM TODO for deep tier)"| LLM
+
+    %% Compaction
+    COMPACT -->|"advisory lock per org"| PG
+    SYNTH -->|"rewrite canonical<br/>re-embed"| PG
+    SYNTH --> EMB
+    SYNTH --> LLM
+    SUPERSEDE -->|"markSuperseded"| PG
+    SUPERSEDE --> LLM
+    PRUNE -->|"bulk confidence=archived"| PG
+
+    %% Migration
+    MIG -->|"ordered SQL<br/>checksummed"| PG
+
+    %% Health
+    HEALTH_API -.->|"checks"| PG
+    HEALTH_API -.->|"checks"| RD
+    HEALTH_API -.->|"checks"| S3
+
+    %% ═══════════════════════════════════════════════════════════════════
+    %% STYLING
+    %% ═══════════════════════════════════════════════════════════════════
+
+    classDef store fill:#1b4332,stroke:#52b788,color:#d8f3dc
+    classDef api fill:#1a1a2e,stroke:#4a9eff,color:#e0e0e0
+    classDef worker fill:#2d1b69,stroke:#a855f7,color:#e9d5ff
+    classDef ai fill:#78350f,stroke:#fbbf24,color:#fef3c7
+    classDef compact fill:#064e3b,stroke:#10b981,color:#d1fae5
+    classDef client fill:#1e293b,stroke:#94a3b8,color:#f1f5f9
+
+    class PG,RD,S3 store
+    class AUTH,RATE,RLS_CTX,ROUTES,HEALTH_API api
+    class DISPATCH,PIPELINE,ENRICHMENT,SWEEP,HEALTH_W worker
+    class EMB,LLM ai
+    class SYNTH,SUPERSEDE,PRUNE compact
+    class IDE,MCP,CLI,SLACK,DASH client

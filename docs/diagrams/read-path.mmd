@@ -1,0 +1,44 @@
+%%{init: {'theme': 'base'}}%%
+
+sequenceDiagram
+    autonumber
+    participant C as Client / Agent
+    participant A as API Pod
+    participant RD as Redis Cache
+    participant EMB as Embedding (LRU + provider)
+    participant PG as PostgreSQL
+
+    C->>A: POST /api/v1/search<br/>Bearer JWT + query
+    A->>A: jwtVerify → claims overwrite body identity
+    A->>A: rate limit by userId
+    A->>RD: GET cache:<org>:<user>:<sha256(req+ACL)>
+
+    alt Cache hit (p95 ~13ms)
+        RD-->>A: cached response
+        A-->>C: 200 + results
+    else Cache miss
+        A->>A: Extract query entities
+        A->>EMB: embed(query) — LRU first, then provider
+
+        par Three signals on separate pooled connections
+            A->>PG: pgvector HNSW ANN (top 50)<br/>SET LOCAL app.* → RLS
+            A->>PG: FTS ts_rank + pg_trgm (top 50)<br/>SET LOCAL app.* → RLS
+            A->>PG: memory_facts by entity overlap<br/>SET LOCAL app.* → RLS
+        end
+
+        A->>PG: Batched hydration<br/>WHERE id = ANY(...)<br/>omits embedding column
+
+        A->>A: Temporal scoring (metadata)
+
+        opt top semantic < 0.85 + repo context
+            A->>PG: Recursive graph expansion
+            A->>PG: Batched hydration
+        end
+
+        A->>A: RRF fusion → Map
+        A->>A: ACL filter (second layer behind RLS)
+        A->>A: Composite ranking + top-K
+        A->>RD: SETEX response (1h TTL)
+        A->>RD: ZINCRBY popular query
+        A-->>C: 200 + results (p95 ~113ms @ c=16)
+    end
