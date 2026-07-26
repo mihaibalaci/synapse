@@ -108,6 +108,10 @@ export async function createServer(): Promise<FastifyInstance> {
   await registerFactRoutes(app);
   await registerFeedbackRoutes(app);
 
+  // Stats (dashboard real-time metrics)
+  const { registerStatsRoutes } = await import('./stats-routes.js');
+  await registerStatsRoutes(app);
+
   // ─── Error Handler ───────────────────────────────────────────────────────
 
   app.setErrorHandler(async (error, request, reply) => {

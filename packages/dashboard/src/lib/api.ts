@@ -49,6 +49,10 @@ export async function getHealth() {
   return api('/health/ready');
 }
 
+export async function getStats() {
+  return api('/api/v1/stats');
+}
+
 export async function submitFeedback(resultId: string, action: string) {
   return api('/api/v1/feedback', {
     method: 'POST',
