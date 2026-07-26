@@ -250,6 +250,69 @@ never rejects.
 
 ---
 
+## 5. Knowledge compaction lifecycle
+
+Runs weekly as a CronJob, separate from the ingestion workers.
+
+```mermaid
+flowchart TB
+    CRON["CronJob (weekly)"] --> LOCK["pg_try_advisory_lock(org)"]
+    LOCK -->|acquired| SYNTH
+    LOCK -->|busy| SKIP["skip org"]
+
+    subgraph SYNTH["Phase 1: Cluster Synthesis"]
+        direction LR
+        LOAD["Load clusters with ≥ 5 members"]
+        HASH["Compute source hash"]
+        IDEM{"synth:hash matches?"}
+        LLM["LLM: synthesize canonical article"]
+        REWRITE["Rewrite canonical chunk<br/>Re-embed 1536d<br/>Demote siblings"]
+        LOAD --> HASH --> IDEM
+        IDEM -->|yes| SKIP2["skip cluster"]
+        IDEM -->|no| LLM --> REWRITE
+    end
+
+    SYNTH --> SUPER
+
+    subgraph SUPER["Phase 2: Fact Supersession"]
+        direction LR
+        RECENT["Recent facts (7 days)"]
+        SIM["Find similar older facts<br/>(embedding ≥ 0.88 + entity overlap ≥ 0.5)"]
+        CONTRA["LLM: CONTRADICTS or COMPATIBLE?"]
+        MARK["markSuperseded(old, new)<br/>sets temporal_valid_until"]
+        RECENT --> SIM --> CONTRA -->|contradicts| MARK
+    end
+
+    SUPER --> PRUNE
+
+    subgraph PRUNE["Phase 3: Stale Archival"]
+        direction LR
+        QUERY["Chunks: usageCount=0, age > 90d,<br/>qualityScore < 0.3, not canonical"]
+        ARCHIVE["confidence = 'archived'<br/>excluded from search ranking"]
+        QUERY --> ARCHIVE
+    end
+
+    PRUNE --> UNLOCK["pg_advisory_unlock(org)"]
+    UNLOCK --> SUMMARY["Log JSON summary"]
+```
+
+Behaviour with no LLM configured (`LLM_PROVIDER=local-none`): synthesis uses
+quality-based re-canonicalization only (no LLM call, picks highest-scored
+member), and fact supersession is skipped entirely. Pruning still runs.
+
+Idempotency: each synthesized canonical stores `linkedVersion = synth:<hash>`
+where the hash covers all member chunk ids. Re-running against the same cluster
+composition is a no-op. Fact supersession is append-only: the old fact stays,
+it just gets a `temporal_valid_until` and a forward pointer.
+
+Token compression over time:
+- Deduplication (real-time) — prevents growth of identical chunks
+- Synthesis (weekly) — replaces N member chunks with 1 canonical article
+- Archival (weekly) — removes unused low-quality chunks from the ranking pool
+- Result: retrieval gradually returns fewer, better results for the same query
+
+---
+
 ## 6. Not implemented
 
 Do not infer these from the diagrams:
@@ -267,6 +330,6 @@ Do not infer these from the diagrams:
   failures.
 - **No cross-region DR.** No replica promotion, no bucket replication, no DNS
   failover. Recovery relies on replaying immutable raw sessions.
-- **Compaction and pruning are partial.** `runMonthlyPruning` and
-  `getCompactionMetrics` return stubs, and there are no `/internal/jobs/*`
-  endpoints.
+- **Compaction metrics stub.** `getCompactionMetrics` returns zeros. There are
+  no `/internal/jobs/*` HTTP endpoints; compaction runs only as a CronJob.
+  Observation is via Job pod logs (`JSON.stringify` summary at exit).

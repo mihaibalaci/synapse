@@ -205,7 +205,44 @@ where it stopped. Or run the Helm Job with
 There is no worker that picks up chunks by `embedding_version` on its own; the
 backfill is the mechanism.
 
-### Compaction and pruning
+### Knowledge compaction
+
+Runs weekly via Helm CronJob (`recall-compaction`). Three phases per org:
+
+1. **Cluster synthesis** — clusters with ≥5 members get a synthesized canonical
+   article via the configured LLM. Source hash makes it idempotent.
+2. **Fact supersession** — recent facts are compared against older facts for
+   contradiction (LLM-judged); contradicted facts get `temporal_valid_until`.
+3. **Stale archival** — unused, old, low-quality, non-canonical chunks are set
+   to `confidence = 'archived'` and excluded from search results.
+
+Without an LLM (`LLM_PROVIDER=local-none`), only quality re-canonicalization
+and pruning run.
+
+```bash
+# Trigger manually (same image as workers)
+kubectl create job --from=cronjob/recall-compaction compaction-manual-$(date +%s)
+
+# Or run locally against Compose
+COMPACTION_ORGANIZATIONS=org-123 npm run start:compaction
+```
+
+Monitor via pod logs — the job prints a JSON summary at exit:
+```json
+{"synthesized": 12, "superseded": 4, "archived": 87, "tokensSaved": 34200, "llmCalls": 16, "errors": 0}
+```
+
+Per-organization advisory locking (`pg_try_advisory_lock`) means concurrent
+pods or retries cannot collide; a locked org is skipped rather than queued.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `COMPACTION_ORGANIZATIONS` | `all` | Comma-separated org ids, or "all" to discover from DB |
+| `COMPACTION_MAX_CLUSTERS` | `50` | Max clusters synthesized per org per run |
+| `COMPACTION_MAX_PRUNE` | `500` | Max chunks archived per org per run |
+| `COMPACTION_ARCHIVE_DAYS` | `90` | Days without usage before archival eligibility |
+
+### Compaction and pruning are partial
 
 `CompactionEngine` exists but `runMonthlyPruning` and `getCompactionMetrics` are
 not implemented, and there are **no** internal HTTP job endpoints. Do not expect

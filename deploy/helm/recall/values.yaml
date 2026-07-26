@@ -138,6 +138,22 @@ embeddingBackfill:
   batchSize: 50
   targetVersion: 1
 
+compaction:
+  enabled: true
+  # Weekly at 02:00 UTC on Sunday
+  schedule: "0 2 * * 0"
+  # "all" discovers organizations from the sessions table.
+  # Set a comma-separated list to compact only specific orgs.
+  organizations: "all"
+  maxClusters: 50
+  maxPrune: 500
+  archiveDays: 90
+  backoffLimit: 2
+  activeDeadlineSeconds: 3600
+  resources:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits: { cpu: 2000m, memory: 2Gi }
+
 availability:
   podDisruptionBudget:
     enabled: true

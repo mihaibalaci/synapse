@@ -12,6 +12,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "start:worker": "node dist/worker-entry.js",
+    "start:compaction": "node dist/compaction-entry.js",
     "dev:worker": "tsx watch src/worker-entry.ts",
     "test": "vitest run",
     "test:watch": "vitest",

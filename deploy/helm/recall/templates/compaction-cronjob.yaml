@@ -1,0 +1,55 @@
+{{- if .Values.compaction.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-compaction
+  labels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: compaction }
+spec:
+  schedule: {{ .Values.compaction.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.compaction.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.compaction.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: compaction }
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "recall.serviceAccountName" . }}
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: compaction
+              image: {{ include "recall.image" (dict "root" . "image" .Values.worker.image) | quote }}
+              imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+              command: ["node", "dist/compaction-entry.js"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              envFrom:
+                - secretRef: { name: {{ include "recall.runtimeSecretName" . }} }
+              env:
+                - { name: NODE_ENV, value: "production" }
+                - { name: LOG_LEVEL, value: {{ .Values.api.env.LOG_LEVEL | quote }} }
+                - { name: EMBEDDING_PROVIDER, value: {{ .Values.embedding.provider | quote }} }
+                - { name: EMBEDDING_MODEL, value: {{ ternary .Values.embedding.openai.model .Values.embedding.selfHosted.model (eq .Values.embedding.provider "openai") | quote }} }
+                - { name: EMBEDDING_DIMENSIONS, value: "1536" }
+                - { name: EMBEDDING_URL, value: {{ .Values.embedding.selfHosted.url | quote }} }
+                - { name: LLM_PROVIDER, value: {{ .Values.llm.provider | quote }} }
+                - { name: LLM_MODEL, value: {{ .Values.llm.model | default .Values.llm.selfHosted.model | default "" | quote }} }
+                - { name: LLM_URL, value: {{ .Values.llm.selfHosted.url | quote }} }
+                - { name: COMPACTION_ORGANIZATIONS, value: {{ .Values.compaction.organizations | quote }} }
+                - { name: COMPACTION_MAX_CLUSTERS, value: {{ .Values.compaction.maxClusters | quote }} }
+                - { name: COMPACTION_MAX_PRUNE, value: {{ .Values.compaction.maxPrune | quote }} }
+                - { name: COMPACTION_ARCHIVE_DAYS, value: {{ .Values.compaction.archiveDays | quote }} }
+              resources:
+                requests: { cpu: {{ .Values.compaction.resources.requests.cpu }}, memory: {{ .Values.compaction.resources.requests.memory }} }
+                limits: { cpu: {{ .Values.compaction.resources.limits.cpu }}, memory: {{ .Values.compaction.resources.limits.memory }} }
+{{- end }}

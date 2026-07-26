@@ -136,6 +136,48 @@ Or enable the Job: `--set embeddingBackfill.enabled=true --set embeddingBackfill
 
 ---
 
+## Knowledge compaction
+
+A weekly CronJob (`recall-compaction`) reduces token usage over time through
+three phases:
+
+1. **Cluster synthesis** — clusters with ≥5 members are synthesized into one
+   canonical article via the configured LLM. The canonical is re-embedded and
+   siblings are demoted. Idempotent via a source hash stored in `linkedVersion`.
+2. **Fact supersession** — recent facts are compared against older facts for
+   semantic contradiction (LLM-judged). Contradicted facts get
+   `temporal_valid_until` and are excluded from default queries.
+3. **Stale archival** — old, unused, low-quality, non-canonical chunks are set
+   to `confidence = 'archived'` and drop out of search ranking.
+
+Without an LLM (`LLM_PROVIDER=local-none`), only quality re-canonicalization
+and pruning run — the service degrades gracefully rather than crashing.
+
+Configuration in `values.yaml`:
+
+```yaml
+compaction:
+  enabled: true
+  schedule: "0 2 * * 0"       # Weekly at 02:00 UTC on Sunday
+  organizations: "all"         # or comma-separated org ids
+  maxClusters: 50              # per org per run
+  maxPrune: 500                # per org per run
+  archiveDays: 90              # usage threshold
+  backoffLimit: 2
+  activeDeadlineSeconds: 3600  # kill if it exceeds 1 hour
+```
+
+Manual trigger:
+
+```bash
+kubectl create job --from=cronjob/recall-compaction compaction-manual-$(date +%s)
+```
+
+Per-organization advisory locking ensures concurrent pods cannot collide; a
+locked org is skipped and retried on the next schedule.
+
+---
+
 ## Performance and capacity
 
 Measured on a 221-chunk corpus, one API process, cache cleared between runs
