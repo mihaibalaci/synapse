@@ -5,6 +5,25 @@ export type ChunkAction = 'index' | 'facts' | 'knowledge' | 'deduplicate' | 'gra
 export type ActionStatus = 'pending' | 'processing' | 'completed' | 'blocked' | 'failed';
 export type ActionClaim = 'claimed' | 'terminal' | 'busy';
 
+/**
+ * Serialize all status transitions for one chunk.
+ *
+ * Reconciliation derives the chunk and session projection from every sibling
+ * action row. Without this lock, concurrent completions each run in their own
+ * READ COMMITTED transaction and cannot see the others' uncommitted rows, so
+ * every one of them can conclude that work is still in flight and write
+ * 'processing'. Nothing reconciles afterwards, leaving a chunk whose actions all
+ * completed permanently stuck. Taking the chunk row lock first makes the last
+ * committer observe all of its siblings.
+ *
+ * Every caller locks the chunk before touching chunk_processing_status, so the
+ * lock order is consistent and cannot deadlock against a sibling action.
+ */
+async function lockChunk(client: PoolClient, chunkId: string): Promise<boolean> {
+  const result = await client.query('SELECT id FROM chunks WHERE id = $1 FOR UPDATE', [chunkId]);
+  return (result.rowCount ?? 0) > 0;
+}
+
 async function reconcile(client: PoolClient, chunkId: string): Promise<void> {
   const chunkResult = await client.query<{ session_id: string }>(`
     UPDATE chunks chunk
@@ -96,6 +115,7 @@ async function reconcile(client: PoolClient, chunkId: string): Promise<void> {
 export class ProcessingStatusRepository {
   async markProcessing(chunkId: string, action: ChunkAction): Promise<ActionClaim> {
     return withTransaction(async client => {
+      await lockChunk(client, chunkId);
       const result = await client.query(`
         UPDATE chunk_processing_status
         SET status = 'processing', attempts = attempts + 1, last_error = NULL,
@@ -126,6 +146,7 @@ export class ProcessingStatusRepository {
 
   async markCompleted(chunkId: string, action: ChunkAction, blocked = false): Promise<void> {
     await withTransaction(async client => {
+      await lockChunk(client, chunkId);
       await client.query(`
         UPDATE chunk_processing_status
         SET status = $3, last_error = NULL, completed_at = NOW(), updated_at = NOW()
@@ -137,6 +158,7 @@ export class ProcessingStatusRepository {
 
   async markFailed(chunkId: string, action: ChunkAction, error: string): Promise<void> {
     await withTransaction(async client => {
+      await lockChunk(client, chunkId);
       await client.query(`
         UPDATE chunk_processing_status
         SET status = 'failed', last_error = $3, updated_at = NOW()
@@ -147,6 +169,41 @@ export class ProcessingStatusRepository {
   }
 
   async reconcileChunkAndSession(chunkId: string): Promise<void> {
-    await withTransaction(client => reconcile(client, chunkId));
+    await withTransaction(async client => {
+      await lockChunk(client, chunkId);
+      await reconcile(client, chunkId);
+    });
+  }
+
+  /**
+   * Repair projections that disagree with their action ledger.
+   *
+   * Defence in depth for the stuck-projection class of bug: any chunk whose
+   * actions are all terminal but whose projection still claims work is in
+   * flight is reconciled again. Returns the number of chunks repaired so a
+   * non-zero result is visible rather than silent.
+   */
+  async sweepStuckProjections(limit = 200): Promise<number> {
+    const candidates = await withTransaction(async client => {
+      const result = await client.query<{ id: string }>(`
+        SELECT chunk.id
+        FROM chunks chunk
+        WHERE (chunk.searchable_status IN ('pending', 'processing')
+            OR chunk.enrichment_status IN ('pending', 'processing'))
+          AND EXISTS (SELECT 1 FROM chunk_processing_status s WHERE s.chunk_id = chunk.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM chunk_processing_status s
+            WHERE s.chunk_id = chunk.id AND s.status IN ('pending', 'processing')
+          )
+        ORDER BY chunk.updated_at ASC
+        LIMIT $1
+      `, [Math.max(1, Math.min(limit, 1000))]);
+      return result.rows.map(row => row.id);
+    });
+
+    for (const chunkId of candidates) {
+      await this.reconcileChunkAndSession(chunkId);
+    }
+    return candidates.length;
   }
 }

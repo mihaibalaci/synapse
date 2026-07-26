@@ -158,10 +158,22 @@ npm run lint                 # ESLint
 npm run migrate              # Apply ordered migrations (advisory-locked, idempotent)
 npm run backfill:embeddings  # Resumable re-embedding backfill
 npm run smoke:local          # Authenticated upload → search proof against Compose
+npm run load:retrieval       # Seed a corpus and measure retrieval p50/p95/p99
+npm run test:concurrency     # Concurrency regression test (needs TEST_DATABASE_URL)
 ```
 
 Migrations never run automatically on startup. Apply them explicitly, or let the
 Helm pre-upgrade Job do it.
+
+`npm test` skips the concurrency regression test unless a real database is
+supplied, because the race it guards cannot be reproduced with mocks:
+
+```bash
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/recall \
+  npm run test:concurrency
+```
+
+See [DATA-FLOW.md](DATA-FLOW.md) for how a request moves through the system.
 
 ## Consumer Packages
 

@@ -19,6 +19,10 @@ x-recall-environment: &recall-environment
   AUTH_AUDIENCE: ${AUTH_AUDIENCE:-recall}
   AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-recall-local-development-secret-change-before-sharing}
   QUEUE_CONCURRENCY: ${QUEUE_CONCURRENCY:-5}
+  # Defaults match src/config. Raise only for local load testing, where the
+  # limiter would otherwise be the thing under measurement.
+  RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
+  RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}
 
 services:
   postgres:

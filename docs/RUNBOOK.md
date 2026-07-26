@@ -15,6 +15,9 @@ object storage. There is no OpenSearch and no Neo4j.
 > every check below is manual. Alert thresholds in this document are targets,
 > not implemented alerts.
 
+See [DATA-FLOW.md](DATA-FLOW.md) for the request and failure paths these
+procedures operate on.
+
 ---
 
 ## Common Operations
@@ -49,6 +52,37 @@ psql "$DATABASE_URL" -c "
     AND updated_at < NOW() - INTERVAL '30 minutes'
   ORDER BY updated_at LIMIT 50;"
 ```
+
+### Stuck projections (self-healing, but verify)
+
+A chunk whose actions are all terminal while its projection still says
+`pending`/`processing` is drift. The worker sweeps for this every 30 seconds and
+reconciles it, logging at warn level with a count:
+
+```
+"msg":"Repaired chunk projections that disagreed with their action ledger","repaired":6
+```
+
+A non-zero count is not an emergency — the work succeeded and the projection was
+corrected — but a *sustained* non-zero count means transitions are racing
+somewhere new and deserves investigation. Check for drift directly:
+
+```bash
+psql "$DATABASE_URL" -c "
+  SELECT count(*) AS drifting
+  FROM chunks chunk
+  WHERE (chunk.searchable_status IN ('pending','processing')
+      OR chunk.enrichment_status IN ('pending','processing'))
+    AND EXISTS (SELECT 1 FROM chunk_processing_status s WHERE s.chunk_id = chunk.id)
+    AND NOT EXISTS (
+      SELECT 1 FROM chunk_processing_status s
+      WHERE s.chunk_id = chunk.id AND s.status IN ('pending','processing'));"
+```
+
+Historical note: before status transitions took a chunk row lock, simultaneous
+action completions could each miss the others and leave a session permanently
+`processing` despite all work succeeding. Guarded by
+`npm run test:concurrency`.
 
 ### Terminal failures (not alerted — check deliberately)
 

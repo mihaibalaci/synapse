@@ -1,5 +1,6 @@
 import { createChildLogger } from '../utils/logger.js';
 import { OutboxRepository, type OutboxEvent } from '../storage/outbox-repository.js';
+import { ProcessingStatusRepository } from '../storage/processing-status-repository.js';
 import {
   enqueueCaptureProcessing,
   enqueueChunkProcessing,
@@ -11,9 +12,12 @@ import {
 
 const logger = createChildLogger({ module: 'outbox-dispatcher' });
 const repository = new OutboxRepository();
+const statusRepository = new ProcessingStatusRepository();
+const SWEEP_INTERVAL_MS = 30_000;
 let timer: NodeJS.Timeout | null = null;
 let dispatching = false;
 let lastLoopCompletedAt: number | null = null;
+let lastSweepAt = 0;
 
 /**
  * Timestamp of the last completed dispatch cycle. A fresh value proves the
@@ -73,10 +77,25 @@ export async function dispatchOutboxOnce(): Promise<number> {
 async function dispatchTick(): Promise<void> {
   try {
     await dispatchOutboxOnce();
+    await sweepStuckProjections();
   } catch (error) {
     logger.error({ err: error }, 'Outbox dispatch cycle failed; will retry');
   } finally {
     lastLoopCompletedAt = Date.now();
+  }
+}
+
+/**
+ * Periodically repair chunk projections whose actions are all terminal.
+ * Runs on a slower cadence than dispatch because it is a safety net, not a
+ * primary path: correct completions reconcile themselves under a chunk lock.
+ */
+async function sweepStuckProjections(): Promise<void> {
+  if (Date.now() - lastSweepAt < SWEEP_INTERVAL_MS) return;
+  lastSweepAt = Date.now();
+  const repaired = await statusRepository.sweepStuckProjections();
+  if (repaired > 0) {
+    logger.warn({ repaired }, 'Repaired chunk projections that disagreed with their action ledger');
   }
 }
 
@@ -92,6 +111,7 @@ export async function stopOutboxDispatcher(): Promise<void> {
   if (timer) clearInterval(timer);
   timer = null;
   lastLoopCompletedAt = null;
+  lastSweepAt = 0;
   while (dispatching) await new Promise(resolve => setTimeout(resolve, 10));
   logger.info('Transactional outbox dispatcher stopped');
 }

@@ -12,10 +12,40 @@
  * Self-hosted providers connect to EMBEDDING_URL.
  */
 
+import { createHash } from 'node:crypto';
 import { getConfig } from '../config/index.js';
 import { createChildLogger } from './logger.js';
 
 const logger = createChildLogger({ module: 'embedding' });
+
+/**
+ * In-process cache for single-text embeddings.
+ *
+ * An embedding is a pure function of (provider, model, dimensions, text), so it
+ * carries no tenant or ACL context and is safe to share across requests in one
+ * process. Retrieval embeds the query on every cache-missing search, and with a
+ * remote provider that is the single most expensive step in the request.
+ *
+ * Deliberately bounded and insertion-ordered: a Map gives cheap LRU-ish
+ * behaviour by re-inserting on hit and evicting the oldest key. Batch
+ * embedding used by ingestion is not cached, since chunk texts are unique and
+ * would only evict useful query entries.
+ */
+const EMBEDDING_CACHE_MAX = Math.max(0, Number(process.env.EMBEDDING_CACHE_MAX ?? 2000));
+const embeddingCache = new Map<string, number[]>();
+
+function cacheKey(provider: string, model: string, dimensions: number, text: string): string {
+  const digest = createHash('sha256').update(text).digest('base64url');
+  return `${provider}:${model}:${dimensions}:${digest}`;
+}
+
+export function getEmbeddingCacheStats(): { size: number; max: number } {
+  return { size: embeddingCache.size, max: EMBEDDING_CACHE_MAX };
+}
+
+export function clearEmbeddingCache(): void {
+  embeddingCache.clear();
+}
 
 export class EmbeddingClient {
   private model: string;
@@ -32,8 +62,27 @@ export class EmbeddingClient {
   }
 
   async embed(text: string): Promise<number[]> {
-    const results = await this.embedBatch([text]);
-    return results[0];
+    if (EMBEDDING_CACHE_MAX === 0) {
+      const results = await this.embedBatch([text]);
+      return results[0];
+    }
+
+    const key = cacheKey(this.provider, this.model, this.dimensions, text);
+    const cached = embeddingCache.get(key);
+    if (cached) {
+      // Re-insert so the hottest queries survive eviction.
+      embeddingCache.delete(key);
+      embeddingCache.set(key, cached);
+      return cached;
+    }
+
+    const [embedding] = await this.embedBatch([text]);
+    if (embeddingCache.size >= EMBEDDING_CACHE_MAX) {
+      const oldest = embeddingCache.keys().next();
+      if (!oldest.done) embeddingCache.delete(oldest.value);
+    }
+    embeddingCache.set(key, embedding);
+    return embedding;
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {

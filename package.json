@@ -20,7 +20,9 @@
     "migrate": "node scripts/migrate.mjs",
     "backfill:embeddings": "npm run build:core && node scripts/backfill-embeddings.mjs",
     "seed": "tsx src/scripts/seed.ts",
-    "smoke:local": "node scripts/smoke-local.mjs"
+    "smoke:local": "node scripts/smoke-local.mjs",
+    "load:retrieval": "node scripts/load-test.mjs",
+    "test:concurrency": "vitest run tests/integration/processing-status-concurrency.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1095.0",

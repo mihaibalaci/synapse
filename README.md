@@ -151,6 +151,7 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md)
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment guide (on-prem, AWS, GCP, hybrid) |
 | [docs/API.md](docs/API.md) | REST API reference with examples |
 | [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) | Local development setup |
+| [docs/DATA-FLOW.md](docs/DATA-FLOW.md) | Request, write, and failure flows with diagrams and measured latency |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | Operational procedures and troubleshooting |
 | [docs/ADR-001](docs/ADR-001-storage-consolidation.md) | Storage consolidation decision |
 | [docs/ADR-002](docs/ADR-002-tiered-ingestion.md) | Tiered ingestion decision |

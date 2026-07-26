@@ -37,7 +37,8 @@ interface FactRow extends QueryResultRow {
   usage_count: number;
   upvotes: number;
   last_accessed_at: Date | string | null;
-  embedding: string | number[] | null;
+  /** Absent when a retrieval projection deliberately omits the vector. */
+  embedding?: string | number[] | null;
   embedding_model: string | null;
   repository: string | null;
   language: string | null;
@@ -61,6 +62,21 @@ const INSERT_SQL = `
     $28, $29, $30, $31
   )
   ON CONFLICT DO NOTHING
+`;
+
+/**
+ * Retrieval projection that omits `embedding`. Fact vectors are only needed for
+ * similarity search, which computes distance in SQL, so shipping and parsing
+ * ~15KB per row into the API process is pure waste on the query path.
+ */
+const RETRIEVAL_COLUMNS = `
+  id, content, type, entities, temporal_observed_at, temporal_valid_from,
+  temporal_valid_until, temporal_superseded_by, temporal_supersedes,
+  temporal_source, source_chunk_id, source_session_id, source_capture_id,
+  source_capture_sequence, source_message_index, extracted_from, author_id,
+  organization_id, team_id, scope, confidence, usage_count, upvotes,
+  last_accessed_at, embedding_model, repository, language, frameworks,
+  created_at, updated_at
 `;
 
 function iso(value: Date | string): string {
@@ -203,7 +219,7 @@ export class FactRepository {
     const limit = Math.max(1, Math.min(options?.limit ?? 20, 500));
     const onlyValid = options?.onlyValid ?? true;
     const result = await query<FactRow>(`
-      SELECT *
+      SELECT ${RETRIEVAL_COLUMNS}
       FROM memory_facts
       WHERE organization_id = $1
         AND entities && $2::text[]
@@ -224,7 +240,7 @@ export class FactRepository {
     const limit = Math.max(1, Math.min(options?.limit ?? 20, 500));
     const requireValid = temporal.onlyCurrentlyValid || temporal.includeSuperseded === false;
     const result = await query<FactRow>(`
-      SELECT *
+      SELECT ${RETRIEVAL_COLUMNS}
       FROM memory_facts
       WHERE organization_id = $1
         AND ($2::timestamptz IS NULL OR created_at >= $2)

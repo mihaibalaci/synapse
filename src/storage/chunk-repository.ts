@@ -46,7 +46,8 @@ interface ChunkRow extends QueryResultRow {
   is_canonical: boolean;
   embedding_model: string;
   embedding_version: number;
-  embedding: string | number[] | null;
+  /** Absent when a retrieval projection deliberately omits the vector. */
+  embedding?: string | number[] | null;
   created_at: Date | string;
   updated_at: Date | string;
   last_accessed_at: Date | string | null;
@@ -70,6 +71,26 @@ const INSERT_SQL = `
     $25, $26, $27, $28, $29, $30, $31::vector, $32, $33, $34, $35, $36, $37
   )
   ON CONFLICT (id) DO NOTHING
+`;
+
+/**
+ * Retrieval projection that omits `embedding`.
+ *
+ * A 1536-dimensional vector arrives as ~15KB of text per row, and retrieval
+ * resolves ~120 candidates per query across the semantic, keyword, and entity
+ * signals. Parsing those vectors costs more CPU than every other step of a
+ * search combined, and nothing downstream reads them: similarity is computed in
+ * SQL, and ranking uses scores and metadata only. Paths that genuinely need the
+ * vector (deduplication, find-similar, backfill) select it explicitly.
+ */
+const RETRIEVAL_COLUMNS = `
+  id, session_id, title, summary, content, token_count, type, entities,
+  code_references, repository, branch, commit_sha, language, languages,
+  frameworks, author_id, organization_id, team_id, acl, searchable_status,
+  enrichment_status, confidence, quality_score, usage_count, upvotes,
+  downvotes, cluster_id, is_canonical, embedding_model, embedding_version,
+  created_at, updated_at, last_accessed_at, expires_at, linked_version,
+  last_validated_at
 `;
 
 function iso(value: Date | string): string {
@@ -229,6 +250,27 @@ export class ChunkRepository {
     return result.rows[0] ? mapChunk(result.rows[0]) : null;
   }
 
+  /**
+   * Batched lookup for retrieval fan-in.
+   *
+   * Keyword, entity, and graph signals each resolve tens of candidate ids. One
+   * query per signal replaces one round trip per candidate, which is where the
+   * hybrid search latency budget was actually being spent. Organization scoping
+   * stays explicit so batching cannot widen the tenant boundary that RLS and
+   * the per-signal queries already enforce.
+   */
+  async findByIds(chunkIds: string[], organizationId: string): Promise<Map<string, Chunk>> {
+    const unique = [...new Set(chunkIds)];
+    if (unique.length === 0) return new Map();
+
+    const result = await query<ChunkRow>(
+      `SELECT ${RETRIEVAL_COLUMNS} FROM chunks
+       WHERE id = ANY($1::uuid[]) AND organization_id = $2`,
+      [unique, organizationId],
+    );
+    return new Map(result.rows.map(row => [row.id, mapChunk(row)]));
+  }
+
   async findBySessionId(sessionId: string): Promise<Chunk[]> {
     const result = await query<ChunkRow>(
       'SELECT * FROM chunks WHERE session_id = $1 ORDER BY created_at ASC',
@@ -251,7 +293,7 @@ export class ChunkRepository {
     logger.debug({ limit, organizationId: options.organizationId }, 'Vector search');
 
     const result = await query<ChunkRow & { similarity: number }>(`
-      SELECT chunks.*, 1 - (embedding <=> $1::vector) AS similarity
+      SELECT ${RETRIEVAL_COLUMNS}, 1 - (embedding <=> $1::vector) AS similarity
       FROM chunks
       WHERE organization_id = $2
         AND embedding IS NOT NULL

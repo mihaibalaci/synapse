@@ -166,6 +166,11 @@ ticket, or annotate what was useful. These sessions get promoted to Tier 2 (deep
 
 ## Data Flow
 
+> **Implementation reference.** This section describes the intended design.
+> For the flow as implemented — sequence diagrams, the transactional outbox and
+> per-action reconciliation, measured latency percentiles, and an explicit list
+> of what is not built — see [docs/DATA-FLOW.md](docs/DATA-FLOW.md).
+
 ### Ingestion Path (Write) — Tiered Processing
 
 The v1 design processed every session through the full LLM extraction pipeline.

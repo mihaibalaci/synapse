@@ -136,6 +136,30 @@ Or enable the Job: `--set embeddingBackfill.enabled=true --set embeddingBackfill
 
 ---
 
+## Performance and capacity
+
+Measured on a 221-chunk corpus, one API process, cache cleared between runs
+(`npm run load:retrieval`):
+
+| Concurrency | p50 | p95 | p99 | rps |
+|---|---|---|---|---|
+| 1 | 10.2ms | 13.1ms | 17.7ms | 95 |
+| 8 | 40.0ms | 61.1ms | 76.1ms | 195 |
+| 16 | 80.4ms | 113.1ms | 138.1ms | 198 |
+| warm cache | 8.1ms | 12.8ms | — | ~1830 |
+
+Throughput saturates near **198 rps per API process**. Past that, added latency
+is event-loop queueing rather than work, so plan capacity in replicas and size
+the HPA accordingly. Retrieval latency is unmeasured at production corpus size;
+treat these as a floor, not a guarantee.
+
+Optional tuning:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `EMBEDDING_CACHE_MAX` | `2000` | In-process LRU for query embeddings. Set `0` to disable. Matters most with a remote provider. |
+| `RATE_LIMIT_MAX` | `100` | Per-identity request budget. Raise **only** for local load testing, or the limiter becomes what you measure. |
+
 ## Health and probes
 
 | Workload | Liveness | Readiness |

@@ -115,29 +115,37 @@ export class RetrievalEngine {
       return { ...cached, cached: true, latencyMs: Date.now() - startTime };
     }
 
-    // 2. Execute search based on strategy
-    let candidates: RetrievalCandidate[];
-
-    // Pre-process: extract entities from query for signal 3
+    // 2. Pre-process: entities for signal 3, and the query vector.
+    // Embedding runs before the database scope opens: it may call a remote
+    // provider, and holding a pooled connection across that wait would starve
+    // the pool under load.
     const queryEntities = extractQueryEntities(request.query);
+    const needsVector = request.strategy !== 'keyword';
+    const queryEmbedding = needsVector
+      ? await this.embeddingClient.embed(request.query)
+      : null;
 
+    // 3. Execute the strategy. Signals run concurrently on separate pooled
+    // connections: measured on a low-latency link, overlapping the queries beats
+    // sharing one connection to save the per-statement RLS setup round trips.
+    let candidates: RetrievalCandidate[];
     switch (request.strategy) {
       case 'semantic':
-        candidates = await this.semanticSearch(request);
+        candidates = await this.semanticSearch(request, queryEmbedding!);
         break;
       case 'keyword':
         candidates = await this.keywordSearch(request);
         break;
       case 'graph':
-        candidates = await this.graphSearch(request);
+        candidates = await this.graphSearch(request, queryEmbedding!);
         break;
       case 'hybrid':
       default:
-        candidates = await this.hybridSearch(request, queryEntities);
+        candidates = await this.hybridSearch(request, queryEntities, queryEmbedding!);
         break;
     }
 
-    // 3. Permission filtering
+    // 4. Permission filtering
     candidates = await this.permissionFilter.filter(candidates, {
       userId: request.developerId,
       organizationId: request.organizationId,
@@ -213,10 +221,10 @@ export class RetrievalEngine {
    * Pure semantic vector search.
    * Fast, good for conceptual similarity, may miss exact terms.
    */
-  private async semanticSearch(request: SearchRequest): Promise<RetrievalCandidate[]> {
-    // Embed the query
-    const queryEmbedding = await this.embeddingClient.embed(request.query);
-
+  private async semanticSearch(
+    request: SearchRequest,
+    queryEmbedding: number[],
+  ): Promise<RetrievalCandidate[]> {
     // Vector ANN search
     const results = await this.chunkRepo.searchByVector(queryEmbedding, {
       limit: 50,
@@ -250,23 +258,28 @@ export class RetrievalEngine {
       limit: 50,
     });
 
-    // Load full chunks for matched IDs
+    // Load matched chunks in one round trip, preserving relevance order.
+    const chunks = await this.chunkRepo.findByIds(
+      results.map(hit => hit.id),
+      request.organizationId,
+    );
+
+    const topScore = results[0]?.score ?? 1;
     const candidates: RetrievalCandidate[] = [];
     for (const hit of results) {
-      const chunk = await this.chunkRepo.findById(hit.id);
-      if (chunk) {
-        candidates.push({
-          chunk,
-          scores: {
-            semantic: 0,
-            keyword: hit.score / (results[0]?.score ?? 1),
-            entityMatch: 0,
-            temporal: 0,
-            graphRelevance: 0,
-          },
-          source: 'keyword',
-        });
-      }
+      const chunk = chunks.get(hit.id);
+      if (!chunk) continue;
+      candidates.push({
+        chunk,
+        scores: {
+          semantic: 0,
+          keyword: hit.score / topScore,
+          entityMatch: 0,
+          temporal: 0,
+          graphRelevance: 0,
+        },
+        source: 'keyword',
+      });
     }
 
     return candidates;
@@ -276,7 +289,10 @@ export class RetrievalEngine {
    * Graph-based search.
    * Starts from query entities and traverses relationships.
    */
-  private async graphSearch(request: SearchRequest): Promise<RetrievalCandidate[]> {
+  private async graphSearch(
+    request: SearchRequest,
+    queryEmbedding: number[],
+  ): Promise<RetrievalCandidate[]> {
     // Extract entities from query for graph seed nodes
     const seedNodeIds: string[] = [];
 
@@ -297,7 +313,7 @@ export class RetrievalEngine {
 
     if (seedNodeIds.length === 0) {
       // Fall back to semantic search if no graph seeds
-      return this.semanticSearch(request);
+      return this.semanticSearch(request, queryEmbedding);
     }
 
     const expansion = await this.graphRepo.expand({
@@ -309,17 +325,21 @@ export class RetrievalEngine {
       minWeight: 0.3,
     });
 
-    // Load chunks for graph-discovered IDs
+    // Load graph-discovered chunks in one round trip, preserving expansion order.
+    const chunks = await this.chunkRepo.findByIds(
+      expansion.relatedContentIds,
+      request.organizationId,
+    );
+
     const candidates: RetrievalCandidate[] = [];
     for (const contentId of expansion.relatedContentIds) {
-      const chunk = await this.chunkRepo.findById(contentId);
-      if (chunk) {
-        candidates.push({
-          chunk,
-          scores: { semantic: 0, keyword: 0, entityMatch: 0, temporal: 0, graphRelevance: 0.7 },
-          source: 'graph',
-        });
-      }
+      const chunk = chunks.get(contentId);
+      if (!chunk) continue;
+      candidates.push({
+        chunk,
+        scores: { semantic: 0, keyword: 0, entityMatch: 0, temporal: 0, graphRelevance: 0.7 },
+        source: 'graph',
+      });
     }
 
     return candidates;
@@ -330,10 +350,14 @@ export class RetrievalEngine {
    * Runs Semantic + Keyword + Entity in parallel, applies Temporal to all,
    * conditionally expands Graph when semantic confidence is low.
    */
-  private async hybridSearch(request: SearchRequest, queryEntities: string[]): Promise<RetrievalCandidate[]> {
-    // Run 3 signals in parallel (Semantic, Keyword, Entity)
+  private async hybridSearch(
+    request: SearchRequest,
+    queryEntities: string[],
+    queryEmbedding: number[],
+  ): Promise<RetrievalCandidate[]> {
+    // Three signals in parallel, each on its own pooled connection.
     const [semanticResults, keywordResults, entityResults] = await Promise.all([
-      this.semanticSearch(request),
+      this.semanticSearch(request, queryEmbedding),
       this.keywordSearch(request),
       this.entitySearch(queryEntities, request.organizationId),
     ]);
@@ -374,7 +398,7 @@ export class RetrievalEngine {
     const shouldExpandGraph = topSemanticScore < 0.85 && request.context?.repository;
 
     if (shouldExpandGraph) {
-      const graphResults = await this.graphSearch(request);
+      const graphResults = await this.graphSearch(request, queryEmbedding);
       for (const candidate of graphResults) {
         const existing = fusedMap.get(candidate.chunk.id);
         if (existing) {
@@ -402,28 +426,33 @@ export class RetrievalEngine {
       onlyValid: true,
     });
 
+    // Resolve every source chunk in one round trip before scoring.
+    const sourceChunkIds = matchingFacts
+      .map(fact => fact.sourceChunkId)
+      .filter((id): id is string => typeof id === 'string');
+    const chunks = await this.chunkRepo.findByIds(sourceChunkIds, organizationId);
+
     const candidates: RetrievalCandidate[] = [];
     const seenChunks = new Set<string>();
+    const queryLower = queryEntities.map(entity => entity.toLowerCase());
 
     for (const fact of matchingFacts) {
       if (!fact.sourceChunkId || seenChunks.has(fact.sourceChunkId)) continue;
+      const chunk = chunks.get(fact.sourceChunkId);
+      if (!chunk) continue;
       seenChunks.add(fact.sourceChunkId);
 
-      const chunk = await this.chunkRepo.findById(fact.sourceChunkId);
-      if (chunk) {
-        const chunkEntityNames = chunk.entities.map(e => e.name.toLowerCase());
-        const queryLower = queryEntities.map(e => e.toLowerCase());
-        const overlap = queryLower.filter(e => chunkEntityNames.includes(e)).length;
-        const unionSize = new Set([...queryLower, ...chunkEntityNames]).size;
-        const entityScore = unionSize > 0 ? Math.min((overlap / unionSize) * 1.5, 1.0) : 0;
+      const chunkEntityNames = chunk.entities.map(e => e.name.toLowerCase());
+      const overlap = queryLower.filter(entity => chunkEntityNames.includes(entity)).length;
+      const unionSize = new Set([...queryLower, ...chunkEntityNames]).size;
+      const entityScore = unionSize > 0 ? Math.min((overlap / unionSize) * 1.5, 1.0) : 0;
 
-        candidates.push({
-          chunk,
-          facts: [fact],
-          scores: { semantic: 0, keyword: 0, entityMatch: entityScore, temporal: 0, graphRelevance: 0 },
-          source: 'entity',
-        });
-      }
+      candidates.push({
+        chunk,
+        facts: [fact],
+        scores: { semantic: 0, keyword: 0, entityMatch: entityScore, temporal: 0, graphRelevance: 0 },
+        source: 'entity',
+      });
     }
 
     return candidates;
