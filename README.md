@@ -196,6 +196,40 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full instructions.
 | GET | `/api/v1/sessions/:id/status` | Check processing status |
 | GET | `/health` | Health check |
 
+## Performance
+
+Measured on a 120-chunk corpus (120 searchable sessions, 88 facts, local
+`EMBEDDING_PROVIDER=local`), single API process, Docker Compose on macOS,
+cache cleared between runs except where noted. Reproduce with
+`npm run load:retrieval`.
+
+| Concurrency | Requests | p50 | p95 | p99 | Throughput |
+|---|---|---|---|---|---|
+| 1 | 1,939 | 9.8ms | 13.2ms | 20.5ms | 97 rps |
+| 4 | 3,567 | 21.1ms | 34.4ms | 46.5ms | 178 rps |
+| 8 | 4,087 | 38.1ms | 58.5ms | 72.3ms | 204 rps |
+| 16 | 3,777 | 80.6ms | 134.0ms | 176.7ms | 188 rps |
+| 32 | 3,962 | 159.2ms | 223.9ms | 263.3ms | 197 rps |
+| **warm cache (c=16)** | **36,378** | **8.5ms** | **11.8ms** | **15.3ms** | **1,818 rps** |
+
+- Throughput saturates near **200 rps per API process**; beyond that, latency
+  is event-loop queueing, so capacity scales with replicas.
+- Warm cache hit rate: **99.95%** on repeated queries with the same ACL context.
+- Zero errors across all runs; zero empty results.
+- PostgreSQL executes the vector ANN query in ~2ms with all buffers cached.
+- Sub-200ms p95 target is met at ≤8 concurrent requests per process; at 16 it
+  reaches 134ms. Real production should run ≥3 replicas to stay within budget.
+
+**What was optimized:**
+- Retrieval projections omit the 1536-dimension embedding column (~15KB/row,
+  ~120 candidates per query) — this alone gave 2.7× throughput.
+- Candidate hydration batched into one `WHERE id = ANY(...)` per signal.
+- Query embeddings cached in a bounded in-process LRU (2000 entries).
+- Signals run in parallel on separate pooled connections.
+
+See [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full request and failure
+paths with sequence diagrams.
+
 ## Tech Stack
 
 | Layer | Component | Technology |
