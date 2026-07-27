@@ -94,7 +94,7 @@ describe('API Integration Tests', () => {
       roles: ['developer'],
       repository_access: ['org/service', 'org/lambda-service'],
       iss: 'https://auth.company.com',
-      aud: 'recall',
+      aud: 'synapse',
     })}`;
   });
 
@@ -232,8 +232,8 @@ describe('API Integration Tests', () => {
         payload: {
           type: 'terminal',
           source: 'iterm2',
-          content: '$ npm run build\n> recall@0.1.0 build\n> tsc\nDone.',
-          metadata: { cwd: '/opt/recall' },
+          content: '$ npm run build\n> synapse@0.1.0 build\n> tsc\nDone.',
+          metadata: { cwd: '/opt/synapse' },
           captureMode: 'passive',
           developerId: 'dev-test',
           organizationId: 'org-test',

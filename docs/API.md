@@ -1,4 +1,4 @@
-# Recall — API Reference
+# Synapse — API Reference
 
 ## Base URL
 
@@ -417,6 +417,200 @@ This enables temporal reasoning: "When did we switch?" "What was the old approac
 
 ---
 
+### Reflect (v3 — Learning Loop)
+
+The Reflect API goes beyond retrieval: it retrieves memories, reasons over them with an LLM, and returns a synthesized answer. As a side-effect, high-confidence answers write learned insights back into memory (the learning loop).
+
+#### `POST /api/v1/reflect`
+
+Reflect on a query — retrieve memories, reason over them, produce a synthesized answer.
+
+**Request:**
+```json
+{
+  "query": "Why did we switch from RabbitMQ to Kafka?",
+  "entityFocus": "Kafka",
+  "context": {
+    "repository": "org/event-platform",
+    "language": "typescript"
+  },
+  "filters": {
+    "repositories": ["org/event-platform"],
+    "types": ["decision", "lesson"]
+  },
+  "maxTokens": 6000,
+  "maxSources": 10,
+  "generateObservation": true,
+  "writeBack": true
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `query` | string (required) | The question or topic to reflect on |
+| `entityFocus` | string | Focus the reflection on a specific entity |
+| `temporalContext` | object | `{ from, to }` — restrict to a time range |
+| `context` | object | Repository, file, language context for retrieval |
+| `filters` | object | Repository, language, type, team filters |
+| `maxTokens` | number | Token budget for LLM context (default: 6000) |
+| `maxSources` | number | Max source items to retrieve (default: 10) |
+| `generateObservation` | boolean | Generate/update entity observation as side-effect (default: true) |
+| `writeBack` | boolean | Write learned insights back to memory (default: true) |
+
+**Response:**
+```json
+{
+  "reflectId": "uuid",
+  "query": "Why did we switch from RabbitMQ to Kafka?",
+  "answer": "The team switched from RabbitMQ to Kafka in March 2025 due to throughput limitations at scale. The event platform was processing 50K events/sec and RabbitMQ's single-queue model became a bottleneck [Source 1]. Kafka's partition-based architecture allowed horizontal scaling across 12 consumer groups [Source 2]. The migration took 3 weeks with zero downtime using a dual-write strategy [Source 4].",
+  "confidence": "high",
+  "reasoning": "Multiple sources consistently describe the migration timeline and rationale with specific details.",
+  "sources": [
+    {
+      "sourceIndex": 1,
+      "type": "fact",
+      "id": "fact-uuid-1",
+      "content": "Team migrated from RabbitMQ to Kafka for better throughput at scale",
+      "factType": "decision",
+      "confidence": 0.92,
+      "entities": ["Kafka", "RabbitMQ"],
+      "createdAt": "2025-03-15T10:00:00Z"
+    },
+    {
+      "sourceIndex": 2,
+      "type": "chunk",
+      "id": "chunk-uuid-1",
+      "title": "Kafka migration planning session",
+      "content": "Discussed partition strategy for 12 consumer groups...",
+      "score": 0.91,
+      "repository": "org/event-platform",
+      "createdAt": "2025-03-10T14:00:00Z"
+    }
+  ],
+  "observation": {
+    "id": "obs-uuid",
+    "entityName": "Kafka",
+    "summary": "Kafka is the primary event streaming platform, adopted March 2025 replacing RabbitMQ. Used across 12 consumer groups handling 50K+ events/sec. Deployed on MSK with 6 brokers.",
+    "sourceFactCount": 8,
+    "updatedAt": "2025-07-27T10:00:00Z"
+  },
+  "learnedInsights": [
+    {
+      "id": "insight-uuid",
+      "content": "Dual-write strategy is the preferred approach for message broker migrations to achieve zero downtime",
+      "type": "pattern"
+    }
+  ],
+  "retrievalLatencyMs": 95,
+  "totalLatencyMs": 2340,
+  "llmTokensUsed": {
+    "input": 4200,
+    "output": 380,
+    "model": "claude-sonnet-4-20250514"
+  }
+}
+```
+
+**Learning Loop behavior:**
+- When `confidence` is `"high"` and `writeBack` is `true`, the system extracts new insights from the answer and stores them as new facts
+- These insights influence future retrieval (they get embedded and indexed)
+- Contributing source facts get their `usageCount` incremented (ranking boost)
+- If `entityFocus` is set, the entity's observation is regenerated
+
+---
+
+### Observations (Mental Models)
+
+Pre-computed entity summaries that cache what the system knows about key entities.
+
+#### `GET /api/v1/observations/:entity`
+
+Get the pre-computed observation for a specific entity.
+
+**Example:** `GET /api/v1/observations/Kafka`
+
+**Response:**
+```json
+{
+  "observation": {
+    "id": "obs-uuid",
+    "entityName": "Kafka",
+    "organizationId": "org-456",
+    "summary": "Kafka is the primary event streaming platform, adopted March 2025 replacing RabbitMQ. Used across 12 consumer groups handling 50K+ events/sec.",
+    "sourceFactIds": ["fact-1", "fact-2"],
+    "sourceFactCount": 8,
+    "createdAt": "2025-06-01T10:00:00Z",
+    "updatedAt": "2025-07-27T10:00:00Z"
+  }
+}
+```
+
+#### `GET /api/v1/observations`
+
+List observations. **Query params:** `entities` (comma-separated, e.g. `?entities=Kafka,Lambda,Redis`)
+
+---
+
+### Learning Loop Metrics
+
+#### `GET /api/v1/stats/learning`
+
+Get learning loop health and metrics for the organization.
+
+**Response:**
+```json
+{
+  "metrics": {
+    "period": { "from": "2025-07-20T00:00:00Z", "to": "2025-07-27T00:00:00Z" },
+    "inline": {
+      "factsExtracted": 1240,
+      "opinionsReinforced": 34,
+      "opinionsWeakened": 8,
+      "opinionsContradicted": 2,
+      "observationsTriggered": 156
+    },
+    "reflect": {
+      "reflectCalls": 89,
+      "highConfidenceAnswers": 52,
+      "insightsWrittenBack": 31,
+      "sourcesBosted": 420
+    },
+    "health": {
+      "isLearning": true,
+      "confidenceTrend": 0.74,
+      "observationCoverage": 0.42
+    }
+  },
+  "health": { "healthy": true, "reasons": [] },
+  "config": {
+    "inlineReinforcementEnabled": true,
+    "reflectWriteBackEnabled": true,
+    "sourceBoostEnabled": true,
+    "writeBackMinConfidence": "high",
+    "maxInsightsPerReflect": 3,
+    "observationRefreshDelay": 30
+  }
+}
+```
+
+#### `POST /api/v1/stats/learning/trigger`
+
+Manually trigger a full learning cycle (opinion reinforcement + observation refresh + discovery).
+
+**Response:**
+```json
+{
+  "triggered": true,
+  "result": {
+    "opinionsReinforced": 5,
+    "observationsRefreshed": 3,
+    "observationsDiscovered": 7
+  }
+}
+```
+
+---
+
 ### Feedback
 
 #### `POST /api/v1/feedback`
@@ -530,4 +724,14 @@ Developer clicks "Save to Knowledge Base" or "This was useful"
 Terminal daemon detects error output / interesting commands
   → Sends POST /api/v1/capture/event with terminal content
   → Indexed for future retrieval ("I saw this error before...")
+```
+
+**5. Reflect (deep understanding queries):**
+```
+Developer asks a "why?" or "what should I know?" question
+  → Plugin calls POST /api/v1/reflect with query + entity focus
+  → System retrieves memories, reasons with LLM, produces synthesis
+  → Returns answer + sources + confidence
+  → If high-confidence: insights written back → system gets smarter
+  → Observation updated (entity summary cached for future queries)
 ```

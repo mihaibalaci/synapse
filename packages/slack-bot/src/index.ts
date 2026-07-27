@@ -2,10 +2,10 @@
  * Recall — Slack Bot
  *
  * Features:
- *   1. /recall <query>          — Search knowledge base from any channel
- *   2. @recall-bot <question>   — Mention to ask a question (thread-friendly)
+ *   1. /synapse <query>          — Search knowledge base from any channel
+ *   2. @synapse <question>   — Mention to ask a question (thread-friendly)
  *   3. 📌 emoji reaction     — Capture a thread as a decision/insight
- *   4. /recall-save             — Capture the current thread to knowledge base
+ *   4. /synapse-save             — Capture the current thread to knowledge base
  *   5. Proactive suggestions — Bot watches for questions it can answer
  *
  * Environment:
@@ -35,13 +35,13 @@ const app = new App({
 
 // ─── Slash Command: /ctx ─────────────────────────────────────────────────────
 
-app.command('/recall', handleSearchCommand);
+app.command('/synapse', handleSearchCommand);
 
-// ─── Slash Command: /recall-save ────────────────────────────────────────────────
+// ─── Slash Command: /synapse-save ────────────────────────────────────────────────
 
-app.command('/recall-save', handleSaveCommand);
+app.command('/synapse-save', handleSaveCommand);
 
-// ─── App Mention: @recall-bot <question> ────────────────────────────────────────
+// ─── App Mention: @synapse <question> ────────────────────────────────────────
 
 app.event('app_mention', handleMention);
 

@@ -1,5 +1,5 @@
 /**
- * /recall <query> — Search knowledge base from Slack.
+ * /synapse <query> — Search knowledge base from Slack.
  * Returns top results as a formatted Slack message with blocks.
  */
 
@@ -19,7 +19,7 @@ export async function handleSearchCommand({
 
   const query = command.text.trim();
   if (!query) {
-    await respond({ text: 'Usage: `/recall <your question>`\nExample: `/ctx how do we deploy to production?`' });
+    await respond({ text: 'Usage: `/synapse <your question>`\nExample: `/ctx how do we deploy to production?`' });
     return;
   }
 

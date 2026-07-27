@@ -15,13 +15,13 @@ const ConfigSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
   // PostgreSQL
-  DATABASE_URL: z.string().default('postgresql://postgres:postgres@localhost:5432/recall'),
+  DATABASE_URL: z.string().default('postgresql://postgres:postgres@localhost:5432/synapse'),
 
   // Redis
   REDIS_URL: z.string().default('redis://localhost:6379'),
 
   // S3 / Object Storage
-  S3_BUCKET: z.string().default('recall-raw'),
+  S3_BUCKET: z.string().default('synapse-raw'),
   S3_REGION: z.string().default('us-east-1'),
   S3_ENDPOINT: z.string().optional(), // For MinIO in local dev
 
@@ -46,7 +46,7 @@ const ConfigSchema = z.object({
 
   // Auth
   AUTH_ISSUER: z.string().default('https://auth.company.com'),
-  AUTH_AUDIENCE: z.string().default('recall'),
+  AUTH_AUDIENCE: z.string().default('synapse'),
   AUTH_JWT_SECRET: z.string().min(32).optional(),
   AUTH_JWT_PUBLIC_KEY: z.string().optional(),
 

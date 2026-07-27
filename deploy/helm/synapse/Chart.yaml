@@ -1,6 +1,6 @@
 apiVersion: v2
-name: recall
-description: Engineering knowledge base — intelligent memory + continuous capture for AI coding agents
+name: synapse
+description: The memory layer that learns — team-scale knowledge system for AI-first engineering organizations
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
@@ -10,5 +10,6 @@ keywords:
   - engineering
   - memory
   - retrieval
+  - learning-loop
 maintainers:
   - name: Platform Team

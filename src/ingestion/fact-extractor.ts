@@ -18,7 +18,7 @@
  */
 
 import { v5 as uuidv5 } from 'uuid';
-import { Worker, Job } from 'bullmq';
+import { Worker, Job, Queue } from 'bullmq';
 import { createChildLogger } from '../utils/logger.js';
 import { getConfig } from '../config/index.js';
 import { QUEUE_NAMES, type ChunkProcessingJob } from './queue.js';
@@ -26,6 +26,9 @@ import { runTrackedChunkJob } from './tracked-job.js';
 import { ChunkRepository } from '../storage/chunk-repository.js';
 import { FactRepository } from '../storage/fact-repository.js';
 import { EmbeddingClient } from '../utils/embedding.js';
+import { LlmClient } from '../utils/llm.js';
+import { OBSERVATION_QUEUE_NAME, type ObservationJob } from './observation-generator.js';
+import { OpinionReinforcementEngine } from './opinion-reinforcement.js';
 import { type Chunk, type MemoryFact, type FactType } from '../models/index.js';
 
 const logger = createChildLogger({ module: 'fact-extractor' });
@@ -36,7 +39,7 @@ const FACT_EXTRACTION_PROMPT = `Extract atomic facts from this engineering conve
 
 Rules:
 - Each fact should be ONE self-contained statement (10-50 words)
-- Extract decisions, preferences, patterns, lessons, constraints, procedures, definitions, relationships
+- Extract decisions, preferences, patterns, lessons, constraints, procedures, definitions, relationships, opinions
 - Include facts from BOTH user and assistant messages (assistant often has the solution)
 - Be specific: include technology names, version numbers, service names
 - DO NOT extract trivial/obvious statements
@@ -45,7 +48,7 @@ Rules:
 
 For each fact, provide:
 - content: the atomic fact statement
-- type: one of [decision, preference, pattern, lesson, constraint, procedure, definition, relationship]
+- type: one of [decision, preference, pattern, lesson, constraint, procedure, definition, relationship, opinion]
 - entities: array of key entities mentioned (technologies, services, concepts)
 - extractedFrom: "user" or "assistant" or "both"
 
@@ -54,17 +57,42 @@ Respond in JSON array format:
 
 If no meaningful facts can be extracted, return an empty array: []`;
 
+// ─── Narrative Fact Extraction Prompt ────────────────────────────────────────
+
+const NARRATIVE_EXTRACTION_PROMPT = `Extract 2-5 narrative facts from this engineering conversation. Unlike atomic facts, narrative facts are comprehensive summaries that preserve cross-turn context and reasoning.
+
+Rules:
+- Each narrative fact should be 50-200 words — self-contained and readable
+- Preserve the full reasoning chain, not just the conclusion
+- Include who said what, what was tried, what worked, and why
+- Capture the "story" of the conversation, not just isolated statements
+- Each narrative should cover one complete topic/exchange
+- Include relevant entities (technologies, services, concepts)
+
+For each narrative, provide:
+- content: the narrative fact (50-200 words, complete story)
+- type: one of [decision, lesson, pattern, procedure, opinion]
+- entities: array of key entities mentioned
+- extractedFrom: "both" (narratives span multiple turns)
+
+Respond in JSON array format:
+[{"content": "...", "type": "...", "entities": ["..."], "extractedFrom": "both"}]
+
+If no meaningful narratives can be extracted, return an empty array: []`;
+
 // ─── Fact Extractor ──────────────────────────────────────────────────────────
 
 export class FactExtractor {
   private chunkRepo: ChunkRepository;
   private factRepo: FactRepository;
   private embeddingClient: EmbeddingClient;
+  private llm: LlmClient;
 
   constructor() {
     this.chunkRepo = new ChunkRepository();
     this.factRepo = new FactRepository();
     this.embeddingClient = new EmbeddingClient();
+    this.llm = new LlmClient();
   }
 
   /**
@@ -149,19 +177,35 @@ export class FactExtractor {
    * LLM-based fact extraction (single-pass).
    */
   private async llmExtract(chunk: Chunk): Promise<RawExtractedFact[]> {
-    try {
-      // TODO: Replace with actual LLM call
-      // const response = await llm.complete({
-      //   system: FACT_EXTRACTION_PROMPT,
-      //   user: chunk.content,
-      //   model: 'claude-haiku' // Use cheap model for extraction
-      // });
-      // return JSON.parse(response);
+    if (this.llm.disabled) return [];
 
-      // For now, use heuristic extraction
-      return this.heuristicExtract(chunk);
+    try {
+      const response = await this.llm.generate(FACT_EXTRACTION_PROMPT, chunk.content);
+      if (!response) return [];
+
+      // Parse JSON array from LLM response
+      const jsonMatch = response.text.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return [];
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (!Array.isArray(parsed)) return [];
+
+      // Validate and normalize each fact
+      return parsed
+        .filter((item: any) =>
+          item.content && typeof item.content === 'string'
+          && item.content.length >= 10 && item.content.length <= 300
+          && item.type && item.entities,
+        )
+        .map((item: any) => ({
+          content: item.content.trim(),
+          type: item.type,
+          entities: Array.isArray(item.entities) ? item.entities : [],
+          extractedFrom: item.extractedFrom ?? 'both',
+        }))
+        .slice(0, 10); // Cap at 10 facts per chunk
     } catch (error) {
-      logger.warn({ err: error, chunkId: chunk.id }, 'LLM fact extraction failed');
+      logger.warn({ err: error, chunkId: chunk.id }, 'LLM fact extraction failed, falling back to heuristic');
       return [];
     }
   }
@@ -229,10 +273,157 @@ export class FactExtractor {
           extractedFrom: line.startsWith('ASSISTANT') ? 'assistant' : 'user',
         });
       }
+
+      // Opinion: "I think X is better", "X is preferred over Y", "we believe"
+      else if (/\b(better than|preferred over|I think|we believe|in my experience|my opinion|recommend .+ over)\b/i.test(cleaned)) {
+        facts.push({
+          content: cleaned.substring(0, 200),
+          type: 'opinion',
+          entities: this.extractEntitiesFromText(cleaned),
+          extractedFrom: line.startsWith('ASSISTANT') ? 'assistant' : 'user',
+        });
+      }
     }
 
     // Limit to most confident facts
     return facts.slice(0, 8);
+  }
+
+  /**
+   * Extract narrative facts from a chunk (coarse-grained, 2-5 per chunk).
+   * Narrative facts preserve cross-turn context and reasoning chains.
+   * Complements atomic facts for multi-hop retrieval.
+   *
+   * Inspired by Hindsight's TEMPR narrative extraction paradigm.
+   */
+  async extractNarrative(chunk: Chunk): Promise<MemoryFact[]> {
+    logger.info({ chunkId: chunk.id }, 'Extracting narrative facts from chunk');
+
+    // Narrative extraction requires LLM — no heuristic fallback
+    let rawFacts: RawExtractedFact[] = [];
+    try {
+      if (!this.llm.disabled) {
+        const response = await this.llm.generate(NARRATIVE_EXTRACTION_PROMPT, chunk.content);
+        if (response) {
+          const jsonMatch = response.text.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(parsed)) {
+              rawFacts = parsed
+                .filter((item: any) =>
+                  item.content && typeof item.content === 'string'
+                  && item.content.length >= 50 && item.content.length <= 500
+                  && item.type && item.entities,
+                )
+                .map((item: any) => ({
+                  content: item.content.trim(),
+                  type: item.type,
+                  entities: Array.isArray(item.entities) ? item.entities : [],
+                  extractedFrom: item.extractedFrom ?? 'both',
+                }))
+                .slice(0, 5);
+            }
+          }
+        }
+      }
+
+      // Fallback to heuristic if LLM is disabled or produced nothing
+      if (rawFacts.length === 0) {
+        rawFacts = this.heuristicNarrative(chunk);
+      }
+    } catch (error) {
+      logger.warn({ err: error, chunkId: chunk.id }, 'Narrative extraction failed');
+      return [];
+    }
+
+    if (rawFacts.length === 0) return [];
+
+    // Build MemoryFact objects (same as atomic, but longer content)
+    const now = new Date().toISOString();
+    const facts: MemoryFact[] = rawFacts.map((raw, index) => ({
+      id: uuidv5(`${chunk.id}:narrative:${index}:${raw.content.substring(0, 50)}`, 'e585bb5c-7b92-430e-824d-cc1b5876b922'),
+      content: raw.content,
+      type: raw.type as FactType,
+      entities: raw.entities,
+      temporal: {
+        observedAt: now,
+        validFrom: chunk.createdAt,
+        temporalSource: 'inferred' as const,
+      },
+      sourceChunkId: chunk.id,
+      sourceSessionId: chunk.sessionId,
+      extractedFrom: raw.extractedFrom as 'user' | 'assistant' | 'both',
+      authorId: chunk.authorId,
+      organizationId: chunk.organizationId,
+      teamId: chunk.teamId,
+      scope: 'organization' as const,
+      confidence: 0.75, // Narratives get slightly higher base confidence
+      usageCount: 0,
+      upvotes: 0,
+      repository: chunk.repository,
+      language: chunk.language,
+      frameworks: chunk.frameworks,
+      createdAt: now,
+      updatedAt: now,
+    }));
+
+    // Embed and persist
+    const factContents = facts.map(f => `${f.content} [${f.entities.join(', ')}]`);
+    const embeddings = await this.embeddingClient.embedBatch(factContents);
+    for (let i = 0; i < facts.length; i++) {
+      facts[i].embedding = embeddings[i];
+      facts[i].embeddingModel = this.embeddingClient.getModelName();
+    }
+
+    const dedupedFacts = await this.deduplicateFacts(facts);
+    if (dedupedFacts.length > 0) {
+      await this.factRepo.createBatch(dedupedFacts);
+    }
+
+    logger.info({
+      chunkId: chunk.id,
+      narratives: dedupedFacts.length,
+    }, 'Narrative fact extraction complete');
+
+    return dedupedFacts;
+  }
+
+  /**
+   * Heuristic narrative extraction — builds a summary narrative from chunk content.
+   * Tries to capture the "story" of the conversation segment.
+   */
+  private heuristicNarrative(chunk: Chunk): RawExtractedFact[] {
+    const content = chunk.content;
+    if (content.length < 200) return []; // Too short for a narrative
+
+    // Build a single narrative from the full chunk
+    const lines = content.split('\n').filter(l => l.trim().length > 20);
+    const userLines = lines.filter(l => /^USER:/i.test(l));
+    const assistantLines = lines.filter(l => /^ASSISTANT:/i.test(l));
+
+    // Extract the topic from user's first substantive message
+    const topic = userLines[0]?.replace(/^USER:\s*/i, '').substring(0, 100) ?? chunk.title;
+
+    // Extract the resolution from assistant's last substantive message
+    const resolution = assistantLines[assistantLines.length - 1]
+      ?.replace(/^ASSISTANT:\s*/i, '')
+      .substring(0, 200) ?? '';
+
+    if (!resolution) return [];
+
+    // Compose narrative
+    const narrative = `${topic}. ${resolution}`.substring(0, 500);
+    const entities = this.extractEntitiesFromText(narrative);
+
+    // Only produce if it's meaningfully different from the topic alone
+    if (narrative.length < 80) return [];
+
+    return [{
+      content: narrative,
+      type: 'lesson',
+      entities,
+      extractedFrom: 'both',
+    }];
   }
 
   /**
@@ -374,6 +565,18 @@ export function startFactExtractionWorker(): Worker {
   const config = getConfig();
   const extractor = new FactExtractor();
   const chunkRepo = new ChunkRepository();
+  const opinionEngine = new OpinionReinforcementEngine();
+
+  // Observation queue for triggering entity summary generation
+  const observationQueue = new Queue(OBSERVATION_QUEUE_NAME, {
+    connection: { url: config.REDIS_URL },
+    defaultJobOptions: {
+      removeOnComplete: { count: 500 },
+      removeOnFail: { count: 1000 },
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 10000 },
+    },
+  });
 
   factWorker = new Worker(
     QUEUE_NAMES.FACT_EXTRACTION,
@@ -387,6 +590,39 @@ export function startFactExtractionWorker(): Worker {
       }
 
       const facts = await extractor.extract(chunk);
+
+      // Trigger observation refresh for entities mentioned in extracted facts
+      if (facts.length > 0) {
+        const entities = new Set<string>();
+        for (const fact of facts) {
+          for (const entity of fact.entities) {
+            entities.add(entity);
+          }
+        }
+        for (const entityName of entities) {
+          await observationQueue.add('observe', {
+            entityName,
+            organizationId: chunk.organizationId,
+            triggerFactId: facts[0].id,
+          } satisfies ObservationJob, {
+            jobId: `observe-${chunk.organizationId}-${entityName.toLowerCase()}`,
+            delay: 30000, // Wait 30s to batch multiple facts from same session
+          });
+        }
+
+        // Inline opinion reinforcement: evaluate new facts against existing opinions
+        // This closes the learning loop at ingestion time (not just during compaction)
+        for (const fact of facts) {
+          if (fact.type !== 'opinion' && fact.entities.length > 0) {
+            try {
+              await opinionEngine.evaluateNewFact(fact, chunk.organizationId);
+            } catch {
+              // Non-critical: inline reinforcement failures don't block ingestion
+            }
+          }
+        }
+      }
+
       return { factCount: facts.length, factIds: facts.map(f => f.id) };
     }),
     {

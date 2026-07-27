@@ -313,7 +313,184 @@ Token compression over time:
 
 ---
 
-## 6. Not implemented
+## 6. Learning Loop data flow
+
+The learning loop creates a closed cycle where the system gets smarter with
+every interaction. Three mechanisms operate at different time scales.
+
+### 6.1 Inline learning (at ingestion time)
+
+Triggered on every fact extraction. New facts immediately evaluate against
+existing opinions and schedule observation refresh.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Worker pod
+    participant FE as Fact Extractor
+    participant FR as Fact Repository
+    participant OR as Opinion Reinforcement
+    participant OQ as Observation Queue
+
+    W->>FE: extract(chunk)
+    FE->>FE: LLM extract OR heuristic fallback
+    FE->>FR: createBatch(newFacts)
+
+    loop for each new fact with entities
+        FE->>OR: evaluateNewFact(fact, orgId)
+        OR->>FR: findByType('opinion', orgId)
+        OR->>OR: filter by entity overlap > 0.3
+        opt overlapping opinions found (max 3)
+            OR->>OR: LLM assess: REINFORCE / WEAKEN / CONTRADICT / NEUTRAL
+            OR->>FR: updateOpinionConfidence(opinionId, newConfidence)
+        end
+    end
+
+    loop for each entity in extracted facts
+        FE->>OQ: enqueue observation refresh (30s delay)
+    end
+```
+
+Latency impact: opinion reinforcement adds 0-3 LLM calls per chunk
+(only for facts with entities overlapping existing opinions). These are
+non-blocking — failures do not affect ingestion.
+
+### 6.2 Reflect learning (at query time)
+
+Triggered on every `POST /api/v1/reflect` call. High-confidence answers
+generate new knowledge that feeds back into the memory graph.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant A as API pod
+    participant RE as Retrieval Engine
+    participant RF as Reflect Engine
+    participant LLM as LLM provider
+    participant FR as Fact Repository
+    participant OR as Observation Repo
+
+    C->>A: POST /api/v1/reflect
+    A->>RE: search(query, hybrid, 5-signal)
+    RE-->>RF: ranked results + facts
+
+    RF->>LLM: synthesize answer from memories
+    LLM-->>RF: answer + confidence + reasoning
+
+    alt confidence = high AND writeBack = true
+        RF->>LLM: extract insights from answer
+        LLM-->>RF: [insight1, insight2, ...]
+        RF->>RF: embed insights, deduplicate
+        RF->>FR: createBatch(newInsightFacts)
+        Note over RF,FR: Learning loop closed:<br/>reflect → new facts → future retrieval
+    end
+
+    alt confidence = high OR medium
+        RF->>FR: incrementUsage(sourceFactIds)
+        Note over RF,FR: Source boosting:<br/>useful facts rank higher next time
+    end
+
+    opt entityFocus provided
+        RF->>LLM: generate/refresh observation
+        RF->>OR: upsert(observation)
+    end
+
+    RF-->>C: answer + sources + learnedInsights + observation
+```
+
+Latency budget:
+- Retrieval: ~100ms
+- Answer synthesis: ~1-3s (LLM-bound)
+- Insight extraction (parallel with response): ~500ms-1s
+- Total: 1.5-4s typical
+
+### 6.3 Batch learning (weekly compaction)
+
+Runs as a CronJob. Performs full-sweep opinion reinforcement, observation
+refresh, and discovery of new entities needing observations.
+
+```mermaid
+flowchart TB
+    CRON["CronJob (weekly)"] --> P1
+
+    subgraph P1["Phase 1: Cluster Synthesis"]
+        SYNTH["Synthesize canonical articles from clusters"]
+    end
+
+    P1 --> P2
+
+    subgraph P2["Phase 2: Fact Supersession"]
+        CONTRA["Detect contradicting facts, mark superseded"]
+    end
+
+    P2 --> P3
+
+    subgraph P3["Phase 3: Opinion Reinforcement"]
+        direction LR
+        LOAD_OP["Load all current opinions"]
+        LOAD_EV["Load recent non-opinion facts (7d)"]
+        ASSESS["LLM assess: reinforce/weaken/contradict"]
+        UPDATE["Update opinion confidence scores"]
+        LOAD_OP --> LOAD_EV --> ASSESS --> UPDATE
+    end
+
+    P3 --> P4
+
+    subgraph P4["Phase 4: Stale Pruning"]
+        ARCHIVE["Archive unused, low-quality chunks"]
+    end
+
+    P4 --> P5
+
+    subgraph P5["Phase 5: Observation Refresh"]
+        direction LR
+        STALE["Refresh stale observations (>7d old)"]
+        DISCOVER["Discover entities with ≥3 facts, no observation"]
+        GENERATE["LLM synthesize entity summaries"]
+        STALE --> GENERATE
+        DISCOVER --> GENERATE
+    end
+
+    P5 --> DONE["Log metrics, exit"]
+```
+
+### 6.4 Learning loop metrics
+
+The system tracks whether it is actively learning via
+`GET /api/v1/stats/learning`:
+
+| Indicator | Healthy Sign | Unhealthy Sign |
+|-----------|-------------|----------------|
+| `isLearning` | Insights written in last 7 days | No insights generated |
+| `confidenceTrend` | Average opinion confidence > 0.5 | Confidence trending to 0 |
+| `observationCoverage` | Growing % of entities have observations | Stalled at 0% |
+| `factsExtracted` | Growing steadily | Dropped to zero |
+
+### 6.5 The complete cycle (conceptual)
+
+```mermaid
+flowchart LR
+    RETAIN["RETAIN<br/>(capture sessions)"]
+    EXTRACT["EXTRACT<br/>(facts + narratives)"]
+    REINFORCE["REINFORCE<br/>(opinion confidence)"]
+    OBSERVE["OBSERVE<br/>(entity summaries)"]
+    RECALL["RECALL<br/>(5-signal retrieval)"]
+    REFLECT["REFLECT<br/>(LLM reasoning)"]
+    WRITEBACK["WRITE-BACK<br/>(new insights)"]
+
+    RETAIN --> EXTRACT --> REINFORCE --> OBSERVE
+    OBSERVE --> RECALL --> REFLECT --> WRITEBACK
+    WRITEBACK --> RETAIN
+    REFLECT -->|source boost| RECALL
+```
+
+Each node feeds into the next. The write-back arrow from REFLECT to RETAIN is
+what closes the loop — without it, the system only retrieves and never learns.
+
+---
+
+## 7. Not implemented
 
 Do not infer these from the diagrams:
 

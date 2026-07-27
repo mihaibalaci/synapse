@@ -1,5 +1,5 @@
 /**
- * /recall-save — Capture the current thread as organizational knowledge.
+ * /synapse-save — Capture the current thread as organizational knowledge.
  * Reads the thread messages and sends them to the knowledge base.
  */
 

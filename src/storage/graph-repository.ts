@@ -41,6 +41,7 @@ const edgeTypes: readonly GraphEdgeType[] = [
   'authored', 'expert_in', 'member_of', 'works_on', 'related_to',
   'supersedes', 'depends_on', 'solves', 'references', 'uses',
   'integrates_with', 'alternative_to', 'belongs_to', 'fork_of',
+  'causes', 'caused_by', 'enables', 'prevents',
 ];
 
 function assertNodeType(value: string): asserts value is GraphNodeType {
@@ -288,6 +289,65 @@ export class GraphRepository {
         .filter(node => node.type === 'chunk' || node.type === 'knowledge')
         .map(node => node.id),
     };
+  }
+
+  /**
+   * Index causal relationships extracted from facts.
+   * Creates edges between concept/technology/chunk nodes when a causal
+   * relationship is detected (e.g., "VPC caused Lambda cold starts").
+   */
+  async indexCausalLinks(links: Array<{
+    organizationId: string;
+    sourceEntityName: string;
+    targetEntityName: string;
+    causalType: 'causes' | 'caused_by' | 'enables' | 'prevents';
+    sourceChunkId?: string;
+    weight?: number;
+  }>): Promise<void> {
+    if (links.length === 0) return;
+
+    await withTransaction(async client => {
+      for (const link of links) {
+        const sourceId = link.sourceEntityName.toLowerCase();
+        const targetId = link.targetEntityName.toLowerCase();
+        const createdAt = new Date().toISOString();
+
+        // Ensure both nodes exist (as technology/concept)
+        await upsertNodeWithClient(client, {
+          id: sourceId,
+          type: 'technology',
+          name: link.sourceEntityName,
+          organizationId: link.organizationId,
+          properties: {},
+          createdAt,
+        });
+        await upsertNodeWithClient(client, {
+          id: targetId,
+          type: 'technology',
+          name: link.targetEntityName,
+          organizationId: link.organizationId,
+          properties: {},
+          createdAt,
+        });
+
+        // Create causal edge with weight increment (strengthens with repeated observation)
+        await upsertScopedEdge(client, link.organizationId, {
+          id: `${link.causalType}:technology:${sourceId}:technology:${targetId}`,
+          type: link.causalType,
+          sourceId,
+          sourceType: 'technology',
+          targetId,
+          targetType: 'technology',
+          properties: {
+            ...(link.sourceChunkId ? { sourceChunkId: link.sourceChunkId } : {}),
+          },
+          weight: link.weight ?? 0.6,
+          createdAt,
+        }, 0.1); // Increment weight on repeated observations
+      }
+    });
+
+    logger.debug({ count: links.length }, 'Causal links indexed');
   }
 
   async findExperts(

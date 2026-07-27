@@ -58,6 +58,12 @@ export const GraphEdgeType = z.enum([
   // Repository relationships
   'belongs_to',          // file → repository
   'fork_of',             // repository → repository
+
+  // Causal relationships (Hindsight-inspired)
+  'causes',              // fact/event → fact/event (A caused B)
+  'caused_by',           // fact/event → fact/event (A was caused by B)
+  'enables',             // technology/decision → capability (A makes B possible)
+  'prevents',            // constraint/decision → problem (A prevents B)
 ]);
 export type GraphEdgeType = z.infer<typeof GraphEdgeType>;
 

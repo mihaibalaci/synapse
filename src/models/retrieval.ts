@@ -42,6 +42,10 @@ export const SearchRequestSchema = z.object({
   topK: z.number().int().min(1).max(50).default(5),
   offset: z.number().int().min(0).default(0),
 
+  /** Token budget: if set, pack results greedily until budget is exhausted.
+   *  Takes precedence over topK when both are specified. */
+  maxTokens: z.number().int().min(100).max(50000).optional(),
+
   /** Search strategy */
   strategy: z.enum([
     'hybrid',         // BM25 + vector + graph (default)
@@ -125,6 +129,12 @@ export const SearchResponseSchema = z.object({
 
   /** Token usage estimate for returned context */
   estimatedTokens: z.number().int(),
+
+  /** Pre-computed entity summaries relevant to this query (mental models) */
+  observations: z.array(z.object({
+    entityName: z.string(),
+    summary: z.string(),
+  })).default([]),
 
   /** Suggested related queries */
   relatedQueries: z.array(z.string()).default([]),

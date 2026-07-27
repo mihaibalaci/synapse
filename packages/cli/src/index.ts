@@ -3,12 +3,12 @@
  * ctx — Recall CLI
  *
  * Commands:
- *   recall search <query>         Search the knowledge base
- *   recall facts [--entity X]     Query atomic facts
- *   recall history <entity>       View temporal evolution of an entity
- *   recall capture <file>         Capture a session from a JSON file
- *   recall insight <text>         Store a quick insight/fact
- *   recall status                 Check system health + stats
+ *   synapse search <query>         Search the knowledge base
+ *   synapse facts [--entity X]     Query atomic facts
+ *   synapse history <entity>       View temporal evolution of an entity
+ *   synapse capture <file>         Capture a session from a JSON file
+ *   synapse insight <text>         Store a quick insight/fact
+ *   synapse status                 Check system health + stats
  */
 
 import { Command } from 'commander';
@@ -22,7 +22,7 @@ import { statusCommand } from './commands/status.js';
 const program = new Command();
 
 program
-  .name('recall')
+  .name('synapse')
   .description('Recall CLI — search and capture engineering knowledge')
   .version('0.1.0');
 

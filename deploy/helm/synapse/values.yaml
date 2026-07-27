@@ -2,7 +2,7 @@ global:
   profile: on-prem
   imageRegistry: ""
   imagePullSecrets: []
-  domain: recall.internal.example.com
+  domain: synapse.internal.example.com
 
 serviceAccount:
   create: true
@@ -12,7 +12,7 @@ serviceAccount:
 api:
   replicaCount: 3
   image:
-    repository: recall/api
+    repository: synapse/api
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   port: 3000
@@ -37,12 +37,12 @@ api:
     annotations: {}
     tls:
       enabled: true
-      secretName: recall-tls
+      secretName: synapse-tls
 
 worker:
   replicaCount: 5
   image:
-    repository: recall/worker
+    repository: synapse/worker
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   env:
@@ -70,7 +70,7 @@ postgresql:
   mode: managed
   host: patroni-primary
   port: 5432
-  database: recall
+  database: synapse
 redis:
   mode: managed
   host: redis-primary
@@ -79,7 +79,7 @@ redis:
 
 objectStorage:
   provider: minio
-  bucket: recall-raw
+  bucket: synapse-raw
   region: us-east-1
   endpoint: http://minio:9000
 
@@ -90,7 +90,7 @@ embedding:
     dimensions: 1536
   selfHosted:
     url: http://embedding-server:8080
-    model: recall-compatible-1536
+    model: synapse-compatible-1536
     dimensions: 1536
 
 llm:
@@ -102,7 +102,7 @@ llm:
 
 auth:
   issuer: https://auth.example.com
-  audience: recall
+  audience: synapse
 
 # Runtime secret keys: DATABASE_URL, REDIS_URL, and one of
 # AUTH_JWT_SECRET/AUTH_JWT_PUBLIC_KEY. Provider API keys and static S3
@@ -124,12 +124,12 @@ secrets:
   externalSecrets:
     secretStore: cluster-secret-store
     secretStoreKind: ClusterSecretStore
-    remoteKey: recall/runtime
+    remoteKey: synapse/runtime
     refreshInterval: 1h
 
 migration:
   enabled: true
-  secretName: recall-migrator
+  secretName: synapse-migrator
   secretKey: DATABASE_URL
   backoffLimit: 3
 

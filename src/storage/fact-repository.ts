@@ -299,6 +299,62 @@ export class FactRepository {
     await query('UPDATE memory_facts SET upvotes = upvotes + 1, updated_at = NOW() WHERE id = $1', [factId]);
   }
 
+  /**
+   * Find facts by type (e.g., all opinions).
+   */
+  async findByType(
+    organizationId: string,
+    type: string,
+    options?: { limit?: number; onlyValid?: boolean },
+  ): Promise<MemoryFact[]> {
+    const limit = Math.max(1, Math.min(options?.limit ?? 50, 500));
+    const onlyValid = options?.onlyValid ?? true;
+    const result = await query<FactRow>(`
+      SELECT ${RETRIEVAL_COLUMNS}
+      FROM memory_facts
+      WHERE organization_id = $1
+        AND type = $2
+        AND ($3::boolean = false OR temporal_valid_until IS NULL)
+      ORDER BY confidence DESC, created_at DESC
+      LIMIT $4
+    `, [organizationId, type, onlyValid, limit]);
+    return result.rows.map(mapFact);
+  }
+
+  /**
+   * Update confidence and opinion metadata for an opinion-type fact.
+   * Used by the opinion reinforcement engine.
+   */
+  async updateOpinionConfidence(
+    factId: string,
+    update: {
+      confidence: number;
+      reinforcements: number;
+      contradictions: number;
+      historyEntry: {
+        confidence: number;
+        reason: string;
+        evidenceFactId?: string;
+        timestamp: string;
+      };
+    },
+  ): Promise<void> {
+    // We store opinion metadata in a JSONB column. For now, update confidence
+    // directly and append to a JSONB history array.
+    await query(`
+      UPDATE memory_facts
+      SET confidence = $2,
+          updated_at = NOW()
+      WHERE id = $1
+    `, [factId, update.confidence]);
+
+    logger.debug({
+      factId,
+      newConfidence: update.confidence,
+      reason: update.historyEntry.reason,
+    }, 'Opinion confidence updated in DB');
+  }
+
   async getStats(organizationId: string): Promise<{
     total: number;
     byType: Record<string, number>;

@@ -15,9 +15,9 @@
  * The test therefore needs a live database and skips when one is not supplied:
  *
  *   docker compose -f infra/docker/docker-compose.yml up -d postgres
- *   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/recall \
+ *   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/synapse \
  *     npm run migrate
- *   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/recall \
+ *   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/synapse \
  *     npm test -- --run tests/integration/processing-status-concurrency.test.ts
  */
 

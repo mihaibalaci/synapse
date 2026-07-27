@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   const logger = getLogger();
 
   enterDatabaseContext({
-    userId: 'recall-worker',
+    userId: 'synapse-worker',
     organizationId: '',
     teamIds: [],
     roles: ['service'],

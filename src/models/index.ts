@@ -107,3 +107,15 @@ export {
   type CaptureEvent,
   type TemporalQuery,
 } from './memory-fact.js';
+
+// Reflect models (v3 — Hindsight-inspired)
+export {
+  ObservationSchema,
+  ReflectRequestSchema,
+  ReflectSourceSchema,
+  ReflectResponseSchema,
+  type Observation,
+  type ReflectRequest,
+  type ReflectSource,
+  type ReflectResponse,
+} from './reflect.js';

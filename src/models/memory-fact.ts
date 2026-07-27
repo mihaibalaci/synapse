@@ -30,6 +30,7 @@ export const FactType = z.enum([
   'procedure',     // "Deploy by merging to main; pipeline handles the rest" — how-tos
   'definition',    // "The auth service is the source of truth for user tokens" — what things are
   'relationship',  // "Service A depends on Service B for user data" — connections
+  'opinion',       // "Kafka is better than SQS for our event-driven use case" — evolving beliefs
 ]);
 export type FactType = z.infer<typeof FactType>;
 
@@ -109,6 +110,23 @@ export const MemoryFactSchema = z.object({
   repository: z.string().optional(),
   language: z.string().optional(),
   frameworks: z.array(z.string()).default([]),
+
+  /** Opinion-specific fields (only populated when type = 'opinion') */
+  opinion: z.object({
+    /** How many times this opinion has been reinforced by supporting evidence */
+    reinforcements: z.number().int().default(0),
+    /** How many times contradicting evidence was observed */
+    contradictions: z.number().int().default(0),
+    /** Confidence trajectory: history of confidence changes */
+    confidenceHistory: z.array(z.object({
+      confidence: z.number().min(0).max(1),
+      reason: z.enum(['initial', 'reinforced', 'weakened', 'contradicted']),
+      evidenceFactId: z.string().uuid().optional(),
+      timestamp: z.string().datetime(),
+    })).default([]),
+    /** The reasoning or rationale behind this opinion */
+    rationale: z.string().optional(),
+  }).optional(),
 
   /** Timestamps */
   createdAt: z.string().datetime(),

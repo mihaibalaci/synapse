@@ -1,8 +1,8 @@
-# Recall — System Architecture (v3)
+# Synapse — System Architecture (v3)
 
 ## Overview
 
-The Recall is a **team-scale memory layer** for engineering organizations.
+The Synapse is a **team-scale memory layer** for engineering organizations.
 It combines intelligent memory extraction and consolidation with continuous background
 capture, creating an ever-improving engineering knowledge base that all AI coding agents
 draw from.
@@ -22,7 +22,7 @@ a shared memory that gets smaller, better, and faster over time.
 | Consolidate where possible | Fewer moving parts = less operational overhead; Postgres does 4 jobs |
 | Multi-signal retrieval | Semantic + keyword + entity + temporal + graph — fuse all signals |
 | Progressive enrichment | Start with cheap heuristics; promote to LLM only when value justifies cost |
-| Team-wide deduplication | 500 engineers solving the same problem → one canonical answer |
+| Team-wide deduplication | Hundreds of engineers solving the same problem → one canonical answer |
 | Temporal grounding | Everything is time-indexed; support "what changed?" queries (Pieces learning) |
 | Strong governance | ACLs, PII detection, secret scanning before knowledge is searchable |
 
@@ -356,7 +356,7 @@ re-evaluation of low-scoring chunks.
 
 | Metric | Value |
 |--------|-------|
-| Engineers | 600+ |
+| Engineers | Hundreds |
 | Sessions/day | 24,000 |
 | Tokens/day (ingestion) | ~350M |
 | Chunks/day (after segmentation) | ~240,000 (avg 10 chunks/session) |
@@ -476,7 +476,7 @@ The system is designed for modular, distributed deployment:
 
 ```
 deploy/
-├── helm/recall/       # Kubernetes Helm chart (primary method)
+├── helm/synapse/       # Kubernetes Helm chart (primary method)
 │   ├── values.yaml              # All configurable knobs
 │   └── profiles/
 │       ├── on-prem.yaml         # Air-gapped: Patroni + MinIO + TEI + Ollama
@@ -523,7 +523,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full instructions.
 ## Project Structure
 
 ```
-recall/
+synapse/
 ├── src/                          # Control Plane
 │   ├── api/                      #   Capture + Retrieval + Feedback endpoints
 │   ├── ingestion/                #   Parser, Segmenter, Fact Extractor, Dedup, Compaction
@@ -538,7 +538,7 @@ recall/
 │   ├── slack-bot/                #   Slack integration (/ctx, @mention, 📌 reaction)
 │   └── dashboard/                #   Next.js web UI (search, facts, analytics)
 ├── deploy/                       # Deployment (any infrastructure)
-│   ├── helm/recall/    #   Kubernetes Helm chart + profiles
+│   ├── helm/synapse/    #   Kubernetes Helm chart + profiles
 │   │   ├── templates/            #     K8s manifests (API, worker, ingress, HPA, mesh)
 │   │   └── profiles/             #     on-prem, cloud-aws, cloud-gcp, hybrid
 │   ├── terraform/                #   Multi-cloud IaC modules (AWS, GCP, on-prem)
@@ -599,6 +599,76 @@ Monthly Pruning Job:
 
 Result: Index size grows sub-linearly even as sessions grow linearly.
 ```
+
+---
+
+## Automatic Learning Loop (v3 — Hindsight-inspired)
+
+The most important architectural addition in v3: the system forms a **closed learning cycle** where every interaction makes it smarter. Inspired by Hindsight's retain/recall/reflect paradigm, adapted for team-scale organizational memory.
+
+### The Core Principle
+
+Previous versions had a linear flow: capture → extract → store → retrieve. The learning loop closes this into a cycle by adding:
+1. **Inline reinforcement** — new facts immediately evaluate against existing opinions
+2. **Reflect write-back** — high-confidence reasoning produces new insights stored as facts
+3. **Source boosting** — useful memories rank higher in future retrieval
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        LEARNING LOOP                                      │
+│                                                                          │
+│  ┌──────────┐    ┌───────────┐    ┌───────────────┐    ┌──────────┐    │
+│  │  RETAIN  │───▶│  EXTRACT  │───▶│   REINFORCE   │───▶│  OBSERVE │    │
+│  │ (capture)│    │(facts+nar)│    │(opinion conf.)│    │(summaries)│    │
+│  └──────────┘    └───────────┘    └───────────────┘    └─────┬─────┘    │
+│       ▲                                                       │          │
+│       │                                                       ▼          │
+│  ┌────┴─────┐    ┌───────────┐    ┌───────────────┐    ┌──────────┐    │
+│  │WRITE-BACK│◀───│  REFLECT  │◀───│    RECALL     │◀───│  QUERY   │    │
+│  │(insights)│    │(LLM reason)│    │(5-signal fuse)│    │          │    │
+│  └──────────┘    └───────────┘    └───────────────┘    └──────────┘    │
+│       │                │                                                 │
+│       │                └── source boost ──▶ ranking weights              │
+│       └────────────────────────────────────────────────────────▶ RETAIN  │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Three Learning Speeds
+
+| Speed | Trigger | Latency | What Happens |
+|-------|---------|---------|------|
+| **Inline** | Every fact extraction | +0-3 LLM calls | New facts evaluate against existing opinions (reinforce/weaken/contradict). Observation refresh queued. |
+| **On reflect** | Every reflect API call | +500ms-1s | High-confidence answers → extract insights → store as new facts. Source facts get usage boost. |
+| **Batch** | Weekly compaction CronJob | Minutes | Full opinion reinforcement sweep. All stale observations refreshed. New entities discovered. |
+
+### Key Components
+
+| Component | File | Role |
+|-----------|------|------|
+| ReflectEngine | `src/retrieval/reflect.ts` | Retrieves → reasons → writes back insights |
+| OpinionReinforcementEngine | `src/ingestion/opinion-reinforcement.ts` | Evaluates evidence against opinions, updates confidence |
+| ObservationGenerator | `src/ingestion/observation-generator.ts` | Synthesizes entity summaries from underlying facts |
+| LearningLoop | `src/ingestion/learning-loop.ts` | Orchestrator, metrics, health checks |
+| Fact Extractor (enhanced) | `src/ingestion/fact-extractor.ts` | Triggers inline reinforcement + observation queue |
+
+### Safety Controls
+
+The loop has built-in controls to prevent runaway growth or contamination:
+
+- **Write-back only on high confidence** — prevents LLM hallucinations from polluting memory
+- **Max 3 insights per reflect** — bounds the growth rate
+- **Deduplication before write-back** — if an insight is already known (>0.92 cosine similarity), skip it
+- **Opinion confidence bounds** — opinions can't exceed 0.95 or fall below 0.1 (never fully certain or fully abandoned)
+- **Non-blocking failures** — all learning operations fail open; ingestion and retrieval are never blocked
+
+### Metrics
+
+Monitor via `GET /api/v1/stats/learning`:
+- `isLearning` — has the system written any insights in the last 7 days?
+- `confidenceTrend` — are opinions getting more or less confident over time?
+- `observationCoverage` — what % of frequent entities have pre-computed summaries?
 
 ---
 

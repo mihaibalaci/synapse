@@ -3,9 +3,9 @@
 x-recall-environment: &recall-environment
   NODE_ENV: production
   LOG_LEVEL: ${LOG_LEVEL:-info}
-  DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/recall
+  DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/synapse
   REDIS_URL: redis://redis:6379
-  S3_BUCKET: recall-raw
+  S3_BUCKET: synapse-raw
   S3_REGION: us-east-1
   S3_ENDPOINT: http://minio:9000
   AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
@@ -87,8 +87,8 @@ services:
     command:
       - >-
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
-        mc mb local/recall-raw --ignore-existing &&
-        mc mb local/recall-exports --ignore-existing
+        mc mb local/synapse-raw --ignore-existing &&
+        mc mb local/synapse-exports --ignore-existing
     restart: "no"
 
   api:

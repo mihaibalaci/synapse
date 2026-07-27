@@ -20,6 +20,7 @@ import { registerFeedbackRoutes } from './feedback-routes.js';
 import { registerCaptureRoutes } from './capture-routes.js';
 import { registerAuthentication } from './auth.js';
 import { registerFactRoutes } from './fact-routes.js';
+import { registerReflectRoutes } from './reflect-routes.js';
 import { checkDatabaseHealth } from '../storage/database.js';
 import { checkCacheHealth } from '../storage/cache.js';
 import { ObjectStorageClient } from '../storage/object-storage.js';
@@ -106,6 +107,7 @@ export async function createServer(): Promise<FastifyInstance> {
   await registerCaptureRoutes(app);
   await registerRetrievalRoutes(app);
   await registerFactRoutes(app);
+  await registerReflectRoutes(app);
   await registerFeedbackRoutes(app);
 
   // Stats (dashboard real-time metrics)

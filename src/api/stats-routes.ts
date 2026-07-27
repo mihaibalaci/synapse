@@ -34,6 +34,34 @@ export async function registerStatsRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  // Learning loop metrics and health
+  app.get('/api/v1/stats/learning', async (request) => {
+    const orgId = request.authContext?.organizationId;
+    if (!orgId) return { error: 'missing organization context' };
+
+    const { LearningLoop } = await import('../ingestion/learning-loop.js');
+    const loop = new LearningLoop();
+
+    const [metrics, health] = await Promise.all([
+      loop.getMetrics(orgId, 7),
+      loop.isHealthy(orgId),
+    ]);
+
+    return { metrics, health, config: loop.getConfig() };
+  });
+
+  // Manual trigger for learning cycle (admin/debug)
+  app.post('/api/v1/stats/learning/trigger', async (request) => {
+    const orgId = request.authContext?.organizationId;
+    if (!orgId) return { error: 'missing organization context' };
+
+    const { LearningLoop } = await import('../ingestion/learning-loop.js');
+    const loop = new LearningLoop();
+    const result = await loop.triggerFullCycle(orgId);
+
+    return { triggered: true, result };
+  });
+
   logger.info('Stats API routes registered');
 }
 

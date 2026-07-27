@@ -1,11 +1,11 @@
 {
-  "name": "@recall/mcp-server",
+  "name": "@synapse/mcp-server",
   "version": "0.1.0",
-  "description": "MCP Server exposing Recall retrieval and capture tools for any AI agent",
+  "description": "MCP Server exposing Synapse retrieval and capture tools for any AI agent",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "recall-mcp": "./dist/index.js"
+    "synapse-mcp": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",

@@ -10,7 +10,7 @@
 
 ```bash
 # 1. Clone and install
-cd recall
+cd synapse
 npm install
 
 # 2. Start infrastructure
@@ -169,7 +169,7 @@ Helm pre-upgrade Job do it.
 supplied, because the race it guards cannot be reproduced with mocks:
 
 ```bash
-TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/recall \
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/synapse \
   npm run test:concurrency
 ```
 
@@ -185,7 +185,7 @@ cd packages/mcp-server && npm install && npm run build
 
 # CLI Tool
 cd packages/cli && npm install && npm run build && npm link
-# Now you can run: recall search "how do we deploy?"
+# Now you can run: synapse search "how do we deploy?"
 
 # Slack Bot
 cd packages/slack-bot && npm install && npm run dev
@@ -205,7 +205,7 @@ For production deployment on any infrastructure, see [DEPLOYMENT.md](DEPLOYMENT.
 
 ```bash
 # On-prem Kubernetes
-helm install ctx ./deploy/helm/recall -f deploy/helm/recall/profiles/on-prem.yaml
+helm install synapse ./deploy/helm/synapse -f deploy/helm/synapse/profiles/on-prem.yaml
 
 # AWS (Terraform + Helm)
 cd deploy/terraform && terraform apply -var-file=environments/aws-prod.tfvars

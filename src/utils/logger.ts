@@ -21,7 +21,7 @@ export function getLogger(): pino.Logger {
       ? { target: 'pino-pretty', options: { colorize: true } }
       : undefined,
     base: {
-      service: 'recall',
+      service: 'synapse',
       env: config.NODE_ENV,
     },
     serializers: {

@@ -2,7 +2,7 @@
 
 ## Service Overview
 
-Recall runs as two Kubernetes Deployments (Helm chart `deploy/helm/recall`):
+Synapse runs as two Kubernetes Deployments (Helm chart `deploy/helm/synapse`):
 
 - **API** — uploads, retrieval, facts, feedback. Behind an Ingress.
 - **Worker** — pipeline, fact/knowledge/dedup/graph enrichment, search indexing,
@@ -26,11 +26,11 @@ procedures operate on.
 
 ```bash
 # API readiness (503 when any dependency is down)
-kubectl exec deploy/recall-api -- wget -qO- http://127.0.0.1:3000/health/ready
+kubectl exec deploy/synapse-api -- wget -qO- http://127.0.0.1:3000/health/ready
 
 # Worker liveness — heartbeatAgeMs proves the dispatch loop is running
-kubectl exec deploy/recall-worker -- wget -qO- http://127.0.0.1:3001/health
-kubectl exec deploy/recall-worker -- wget -qO- http://127.0.0.1:3001/health/ready
+kubectl exec deploy/synapse-worker -- wget -qO- http://127.0.0.1:3001/health
+kubectl exec deploy/synapse-worker -- wget -qO- http://127.0.0.1:3001/health/ready
 
 # Queue depth per queue
 redis-cli -u "$REDIS_URL" LLEN bull:session-processing:wait
@@ -129,7 +129,7 @@ as shown above.
 ### Scale workers
 
 ```bash
-kubectl scale deployment/recall-worker --replicas=15
+kubectl scale deployment/synapse-worker --replicas=15
 ```
 
 HPA handles steady state. By default it scales on CPU; set
@@ -207,7 +207,7 @@ backfill is the mechanism.
 
 ### Knowledge compaction
 
-Runs weekly via Helm CronJob (`recall-compaction`). Three phases per org:
+Runs weekly via Helm CronJob (`synapse-compaction`). Three phases per org:
 
 1. **Cluster synthesis** — clusters with ≥5 members get a synthesized canonical
    article via the configured LLM. Source hash makes it idempotent.
@@ -221,7 +221,7 @@ and pruning run.
 
 ```bash
 # Trigger manually (same image as workers)
-kubectl create job --from=cronjob/recall-compaction compaction-manual-$(date +%s)
+kubectl create job --from=cronjob/synapse-compaction compaction-manual-$(date +%s)
 
 # Or run locally against Compose
 COMPACTION_ORGANIZATIONS=org-123 npm run start:compaction

@@ -60,7 +60,7 @@ async function main(): Promise<void> {
 
   // Compaction runs as a service context — no tenant RLS restrictions.
   enterDatabaseContext({
-    userId: 'recall-compaction',
+    userId: 'synapse-compaction',
     organizationId: '',
     teamIds: [],
     roles: ['service'],
@@ -115,7 +115,9 @@ async function main(): Promise<void> {
         clustersSynthesized: 0,
         clustersSkipped: 0,
         factsSuperseded: 0,
+        opinionsReinforced: 0,
         chunksArchived: 0,
+        observationsRefreshed: 0,
         tokensSaved: 0,
         llmCalls: 0,
         errors: [(error as Error).message],

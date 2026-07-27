@@ -1,5 +1,5 @@
 {
-  "name": "@recall/slack-bot",
+  "name": "@synapse/slack-bot",
   "version": "0.1.0",
   "description": "Slack bot for searching knowledge and capturing decision threads",
   "type": "module",

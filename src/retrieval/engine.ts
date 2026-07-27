@@ -24,6 +24,7 @@ import { SearchIndex } from '../storage/search-index.js';
 import { SearchCache } from '../storage/cache.js';
 import { RankingEngine } from './ranking.js';
 import { PermissionFilter } from './permission-filter.js';
+import { ObservationRepository } from '../storage/observation-repository.js';
 import {
   type SearchRequest,
   type SearchResponse,
@@ -83,6 +84,7 @@ export class RetrievalEngine {
   private searchCache: SearchCache;
   private rankingEngine: RankingEngine;
   private permissionFilter: PermissionFilter;
+  private observationRepo: ObservationRepository;
 
   constructor() {
     this.embeddingClient = new EmbeddingClient();
@@ -93,6 +95,7 @@ export class RetrievalEngine {
     this.searchCache = new SearchCache();
     this.rankingEngine = new RankingEngine();
     this.permissionFilter = new PermissionFilter();
+    this.observationRepo = new ObservationRepository();
   }
 
   /**
@@ -157,11 +160,19 @@ export class RetrievalEngine {
     // 4. Rank and score
     const ranked = await this.rankingEngine.rank(candidates, request);
 
-    // 5. Take top-K results
-    const topResults = ranked.slice(request.offset, request.offset + request.topK);
+    // 5. Select results: token-budget packing or top-K
+    let topResults: typeof ranked;
+    if (request.maxTokens) {
+      topResults = this.packByTokenBudget(ranked, request.maxTokens, request.offset);
+    } else {
+      topResults = ranked.slice(request.offset, request.offset + request.topK);
+    }
 
     // 6. Format response
     const results: SearchResultItem[] = topResults.map(candidate => this.formatResult(candidate));
+
+    // 6b. Enrich with observations for detected entities
+    const observations = await this.loadRelevantObservations(queryEntities, request.organizationId);
 
     // 7. Estimate token usage
     const estimatedTokens = results.reduce((sum, r) => {
@@ -176,6 +187,7 @@ export class RetrievalEngine {
       latencyMs: Date.now() - startTime,
       cached: false,
       estimatedTokens,
+      observations,
       relatedQueries: [], // TODO: generate related queries
     };
 
@@ -475,6 +487,64 @@ export class RetrievalEngine {
     if (chunk.confidence === 'low') score *= 0.6;
     if (chunk.confidence === 'archived') score *= 0.3;
     return score;
+  }
+
+  // ─── Token Budget Packing ────────────────────────────────────────────────
+
+  /**
+   * Greedy token-budget packing: iterate over ranked candidates in order
+   * and include each one until the cumulative token count reaches the budget.
+   * Inspired by Hindsight's TEMPR token budget filtering.
+   */
+  private packByTokenBudget<T extends { chunk: Chunk }>(
+    ranked: T[],
+    maxTokens: number,
+    offset: number = 0,
+  ): T[] {
+    const results: T[] = [];
+    let remainingTokens = maxTokens;
+    const candidates = ranked.slice(offset);
+
+    for (const candidate of candidates) {
+      const content = candidate.chunk.content ?? candidate.chunk.summary;
+      const estimatedTokens = Math.ceil(content.length / 4);
+
+      if (estimatedTokens > remainingTokens) {
+        // If first result doesn't fit, include it anyway (always return at least 1)
+        if (results.length === 0) {
+          results.push(candidate);
+        }
+        break;
+      }
+
+      results.push(candidate);
+      remainingTokens -= estimatedTokens;
+    }
+
+    return results;
+  }
+
+  // ─── Observation Loading ─────────────────────────────────────────────────
+
+  /**
+   * Load relevant observations for entities detected in the query.
+   * Returns pre-computed entity summaries that can be included in the response.
+   */
+  private async loadRelevantObservations(
+    queryEntities: string[],
+    organizationId: string,
+  ): Promise<Array<{ entityName: string; summary: string }>> {
+    if (queryEntities.length === 0) return [];
+
+    const observations = await this.observationRepo.findByEntities(
+      queryEntities,
+      organizationId,
+    );
+
+    return observations.map(o => ({
+      entityName: o.entityName,
+      summary: o.summary,
+    }));
   }
 
   // ─── Result Formatting ─────────────────────────────────────────────────────

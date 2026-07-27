@@ -565,7 +565,8 @@ export async function initializeSchema(): Promise<void> {
       edge_type TEXT NOT NULL CHECK (edge_type IN (
         'authored', 'expert_in', 'member_of', 'works_on', 'related_to',
         'supersedes', 'depends_on', 'solves', 'references', 'uses',
-        'integrates_with', 'alternative_to', 'belongs_to', 'fork_of'
+        'integrates_with', 'alternative_to', 'belongs_to', 'fork_of',
+        'causes', 'caused_by', 'enables', 'prevents'
       )),
       source_node_type TEXT NOT NULL,
       source_node_id TEXT NOT NULL,
@@ -593,6 +594,26 @@ export async function initializeSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (chunk_id, entity_name, entity_type)
     )
+  `);
+
+  // Observations table (v3 — entity summaries / mental models)
+  await query(`
+    CREATE TABLE IF NOT EXISTS observations (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      entity_name TEXT NOT NULL,
+      organization_id TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      source_fact_ids UUID[] NOT NULL DEFAULT '{}',
+      source_fact_count INTEGER NOT NULL DEFAULT 0,
+      embedding vector(1536),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (organization_id, LOWER(entity_name))
+    )
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_observations_org_entity
+      ON observations(organization_id, (LOWER(entity_name)))
   `);
 
   // Add security columns for databases initialized by an older release.
@@ -725,8 +746,8 @@ export async function initializeSchema(): Promise<void> {
   for (const policy of policies) {
     await query(`ALTER TABLE ${policy.table} ENABLE ROW LEVEL SECURITY`);
     await query(`ALTER TABLE ${policy.table} FORCE ROW LEVEL SECURITY`);
-    await query(`DROP POLICY IF EXISTS recall_tenant_acl ON ${policy.table}`);
-    await query(`CREATE POLICY recall_tenant_acl ON ${policy.table}
+    await query(`DROP POLICY IF EXISTS synapse_tenant_acl ON ${policy.table}`);
+    await query(`CREATE POLICY synapse_tenant_acl ON ${policy.table}
       USING (${policy.using}) WITH CHECK (${policy.check})`);
   }
 

@@ -7,7 +7,7 @@ const config = loadConfig();
 const connectionString = process.env.MIGRATION_DATABASE_URL ?? config.DATABASE_URL;
 const batchSize = Math.max(1, Math.min(Number(process.env.BACKFILL_BATCH_SIZE ?? 50), 500));
 const targetVersion = Math.max(1, Number(process.env.EMBEDDING_VERSION ?? 1));
-const client = new Client({ connectionString, application_name: 'recall-embedding-backfill' });
+const client = new Client({ connectionString, application_name: 'synapse-embedding-backfill' });
 const embeddings = new EmbeddingClient();
 
 const vector = values => `[${values.join(',')}]`;
@@ -78,14 +78,14 @@ async function backfillFacts() {
 
 async function main() {
   await client.connect();
-  const lock = await client.query("SELECT pg_try_advisory_lock(hashtext('recall-embedding-backfill')) AS acquired");
+  const lock = await client.query("SELECT pg_try_advisory_lock(hashtext('synapse-embedding-backfill')) AS acquired");
   if (!lock.rows[0]?.acquired) throw new Error('Another embedding backfill is already running');
   try {
     const chunks = await backfillChunks();
     const facts = await backfillFacts();
     console.log(JSON.stringify({ chunks, facts, dimensions: embeddings.getDimensions(), model: embeddings.getModelName() }));
   } finally {
-    await client.query("SELECT pg_advisory_unlock(hashtext('recall-embedding-backfill'))");
+    await client.query("SELECT pg_advisory_unlock(hashtext('synapse-embedding-backfill'))");
     await client.end();
   }
 }

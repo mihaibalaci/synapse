@@ -2,8 +2,8 @@
  * API Client — shared HTTP client for all CLI commands.
  */
 
-const BASE_URL = process.env.RECALL_API_URL ?? 'http://localhost:3000';
-const TOKEN = process.env.RECALL_TOKEN ?? '';
+const BASE_URL = process.env.SYNAPSE_API_URL ?? 'http://localhost:3000';
+const TOKEN = process.env.SYNAPSE_TOKEN ?? '';
 const DEVELOPER_ID = process.env.DEVELOPER_ID ?? process.env.USER ?? 'unknown';
 const ORGANIZATION_ID = process.env.ORGANIZATION_ID ?? 'default';
 

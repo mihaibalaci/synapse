@@ -21,6 +21,8 @@ import { EmbeddingClient } from '../utils/embedding.js';
 import { ChunkRepository } from '../storage/chunk-repository.js';
 import { ClusterRepository } from '../storage/cluster-repository.js';
 import { FactRepository } from '../storage/fact-repository.js';
+import { ObservationGenerator } from './observation-generator.js';
+import { OpinionReinforcementEngine } from './opinion-reinforcement.js';
 import { type Chunk, type ChunkCluster, type MemoryFact } from '../models/index.js';
 import { query, withTransaction } from '../storage/database.js';
 
@@ -90,7 +92,9 @@ export interface CompactionResult {
   clustersSynthesized: number;
   clustersSkipped: number;
   factsSuperseded: number;
+  opinionsReinforced: number;
   chunksArchived: number;
+  observationsRefreshed: number;
   tokensSaved: number;
   llmCalls: number;
   errors: string[];
@@ -103,6 +107,8 @@ export class CompactionEngine {
   private chunkRepo: ChunkRepository;
   private clusterRepo: ClusterRepository;
   private factRepo: FactRepository;
+  private observationGenerator: ObservationGenerator;
+  private opinionEngine: OpinionReinforcementEngine;
 
   constructor(config: Partial<CompactionConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -111,6 +117,8 @@ export class CompactionEngine {
     this.chunkRepo = new ChunkRepository();
     this.clusterRepo = new ClusterRepository();
     this.factRepo = new FactRepository();
+    this.observationGenerator = new ObservationGenerator();
+    this.opinionEngine = new OpinionReinforcementEngine();
   }
 
   /**
@@ -122,7 +130,9 @@ export class CompactionEngine {
       clustersSynthesized: 0,
       clustersSkipped: 0,
       factsSuperseded: 0,
+      opinionsReinforced: 0,
       chunksArchived: 0,
+      observationsRefreshed: 0,
       tokensSaved: 0,
       llmCalls: 0,
       errors: [],
@@ -143,14 +153,38 @@ export class CompactionEngine {
       await this.detectFactSupersession(organizationId, result);
     }
 
-    // Phase 3: Stale pruning
+    // Phase 3: Opinion reinforcement (evaluate recent evidence against opinions)
+    if (!this.llm.disabled) {
+      try {
+        const reinforceResult = await this.opinionEngine.reinforceFromRecentFacts(organizationId);
+        result.opinionsReinforced = reinforceResult.reinforced + reinforceResult.weakened + reinforceResult.contradicted;
+        result.llmCalls += reinforceResult.llmCalls;
+      } catch (error) {
+        result.errors.push(`Opinion reinforcement: ${(error as Error).message}`);
+        logger.warn({ err: error, organizationId }, 'Opinion reinforcement failed during compaction');
+      }
+    }
+
+    // Phase 4: Stale pruning
     await this.pruneStaleChunks(organizationId, result);
+
+    // Phase 5: Observation refresh (refresh stale + discover new)
+    try {
+      const refreshResult = await this.observationGenerator.refreshStale(organizationId);
+      const discovered = await this.observationGenerator.discoverAndGenerate(organizationId);
+      result.observationsRefreshed = refreshResult.refreshed + discovered;
+    } catch (error) {
+      result.errors.push(`Observation refresh: ${(error as Error).message}`);
+      logger.warn({ err: error, organizationId }, 'Observation refresh failed during compaction');
+    }
 
     logger.info({
       org: organizationId,
       synthesized: result.clustersSynthesized,
       superseded: result.factsSuperseded,
+      opinions: result.opinionsReinforced,
       archived: result.chunksArchived,
+      observations: result.observationsRefreshed,
       tokensSaved: result.tokensSaved,
       llmCalls: result.llmCalls,
       errors: result.errors.length,

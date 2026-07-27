@@ -1,4 +1,4 @@
-scope: recall
+scope: synapse
 name: ${PATRONI_NAME}
 
 restapi:
@@ -15,7 +15,7 @@ restapi:
 kubernetes:
   namespace: ${PATRONI_NAMESPACE}
   labels:
-    app.kubernetes.io/name: recall
+    app.kubernetes.io/name: synapse
     app.kubernetes.io/component: patroni
   role_label: patroni-role
   scope_label: patroni-cluster
@@ -53,8 +53,8 @@ bootstrap:
         max_wal_senders: 16
         max_replication_slots: 16
         archive_mode: "on"
-        archive_command: "pgbackrest --stanza=recall archive-push %p"
-        restore_command: "pgbackrest --stanza=recall archive-get %f %p"
+        archive_command: "pgbackrest --stanza=synapse archive-push %p"
+        restore_command: "pgbackrest --stanza=synapse archive-get %f %p"
         archive_timeout: 60s
         shared_preload_libraries: pg_stat_statements
         password_encryption: scram-sha-256

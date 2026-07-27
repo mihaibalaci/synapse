@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Recall — MCP Server
+ * Synapse — MCP Server
  *
  * Exposes the knowledge base as MCP tools that any AI agent can use.
  * Works with Claude Desktop, Cursor, Kiro, Windsurf, Cline, and any
@@ -15,8 +15,8 @@
  *   - save_insight: Store a single atomic fact/insight
  *
  * Configuration via environment variables:
- *   RECALL_API_URL  — API base URL (default: http://localhost:3000)
- *   RECALL_TOKEN — Bearer token for auth
+ *   SYNAPSE_API_URL  — API base URL (default: http://localhost:3000)
+ *   SYNAPSE_TOKEN — Bearer token for auth
  *   DEVELOPER_ID — Current developer identity
  *   ORGANIZATION_ID — Organization scope
  */
@@ -27,8 +27,8 @@ import { z } from 'zod';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
-const BASE_URL = process.env.RECALL_API_URL ?? 'http://localhost:3000';
-const TOKEN = process.env.RECALL_TOKEN ?? '';
+const BASE_URL = process.env.SYNAPSE_API_URL ?? 'http://localhost:3000';
+const TOKEN = process.env.SYNAPSE_TOKEN ?? '';
 const DEVELOPER_ID = process.env.DEVELOPER_ID ?? 'unknown';
 const ORGANIZATION_ID = process.env.ORGANIZATION_ID ?? 'default';
 
@@ -55,7 +55,7 @@ async function apiCall(path: string, method: string, body?: unknown): Promise<an
 // ─── MCP Server ──────────────────────────────────────────────────────────────
 
 const server = new McpServer({
-  name: 'recall',
+  name: 'synapse',
   version: '0.1.0',
 });
 
@@ -259,6 +259,52 @@ server.tool(
         text: `Session saved to knowledge base.\nID: ${result.sessionId}\nStatus: ${result.status}\nTier: ${result.tier ?? 'deep'}\n\nThis will be processed and made available for future retrieval.`,
       }],
     };
+  },
+);
+
+// ─── Tool: reflect_on_knowledge ──────────────────────────────────────────────
+
+server.tool(
+  'reflect_on_knowledge',
+  'Reflect on a topic by reasoning over retrieved organizational memories. Unlike search (which returns raw results), reflect synthesizes a direct answer by thinking across multiple memories, facts, and decisions. Use for questions that require connecting multiple pieces of information or understanding "why" something is the way it is.',
+  {
+    query: z.string().describe('The question to reflect on (e.g. "Why did we switch to Kafka?" or "What should I know about our auth architecture?")'),
+    entityFocus: z.string().optional().describe('Focus the reflection on a specific entity (e.g. "Kafka", "auth-service")'),
+    repository: z.string().optional().describe('Scope to a specific repository'),
+    maxTokens: z.number().optional().default(6000).describe('Token budget for context (more = deeper reflection but slower)'),
+  },
+  async ({ query, entityFocus, repository, maxTokens }) => {
+    const result = await apiCall('/api/v1/reflect', 'POST', {
+      query,
+      entityFocus,
+      context: { repository },
+      filters: { repositories: repository ? [repository] : undefined },
+      maxTokens: maxTokens ?? 6000,
+      generateObservation: true,
+      developerId: DEVELOPER_ID,
+      organizationId: ORGANIZATION_ID,
+    });
+
+    let response = `## Reflection: ${query}\n\n`;
+    response += result.answer + '\n\n';
+    response += `---\n_Confidence: ${result.confidence} | ${result.sources?.length ?? 0} sources | ${result.totalLatencyMs}ms_`;
+
+    if (result.observation) {
+      response += `\n\n**Entity Summary (${result.observation.entityName}):** ${result.observation.summary}`;
+    }
+
+    if (result.sources?.length > 0) {
+      response += '\n\n**Sources:**\n';
+      for (const source of result.sources.slice(0, 5)) {
+        if (source.type === 'fact') {
+          response += `- [Fact] ${source.content}\n`;
+        } else {
+          response += `- [${source.title ?? 'Chunk'}] ${source.content?.substring(0, 100) ?? ''}...\n`;
+        }
+      }
+    }
+
+    return { content: [{ type: 'text', text: response }] };
   },
 );
 

@@ -1,5 +1,5 @@
 {
-  "name": "@recall/dashboard",
+  "name": "@synapse/dashboard",
   "version": "0.1.0",
   "description": "Web dashboard for browsing, searching, and validating engineering knowledge",
   "private": true,

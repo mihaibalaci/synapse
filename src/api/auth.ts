@@ -31,7 +31,7 @@ declare module '@fastify/jwt' {
   }
 }
 
-const DEVELOPMENT_SECRET = 'recall-development-secret-not-for-production-use';
+const DEVELOPMENT_SECRET = 'synapse-development-secret-not-for-production-use';
 
 export async function registerAuthentication(app: FastifyInstance): Promise<void> {
   const config = getConfig();

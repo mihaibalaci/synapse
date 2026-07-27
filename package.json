@@ -1,7 +1,7 @@
 {
-  "name": "recall",
+  "name": "synapse",
   "version": "0.1.0",
-  "description": "Centralized AI session knowledge base for engineering teams",
+  "description": "The memory layer that learns — team-scale knowledge system for AI-first engineering organizations",
   "main": "dist/index.js",
   "workspaces": [
     "packages/*"

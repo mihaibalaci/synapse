@@ -4,7 +4,7 @@ kind: NetworkPolicy
 metadata: { name: {{ .Release.Name }}-api-ingress }
 spec:
   podSelector:
-    matchLabels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: api }
+    matchLabels: { app.kubernetes.io/name: synapse, app.kubernetes.io/component: api }
   policyTypes: [Ingress]
   ingress:
     - from:
@@ -17,7 +17,7 @@ kind: NetworkPolicy
 metadata: { name: {{ .Release.Name }}-worker-ingress }
 spec:
   podSelector:
-    matchLabels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: worker }
+    matchLabels: { app.kubernetes.io/name: synapse, app.kubernetes.io/component: worker }
   policyTypes: [Ingress]
   ingress: []
 {{- end }}

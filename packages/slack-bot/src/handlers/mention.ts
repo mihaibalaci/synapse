@@ -1,5 +1,5 @@
 /**
- * @recall-bot <question> — Answer questions via app mention.
+ * @synapse <question> — Answer questions via app mention.
  * Replies in-thread with knowledge from the store.
  */
 

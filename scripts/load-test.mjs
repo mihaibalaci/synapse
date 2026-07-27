@@ -25,9 +25,9 @@
 import { createHmac, randomUUID } from 'node:crypto';
 
 const apiUrl = process.env.RECALL_API_URL ?? 'http://localhost:3000';
-const secret = process.env.AUTH_JWT_SECRET ?? 'recall-local-development-secret-change-before-sharing';
-const issuer = process.env.AUTH_ISSUER ?? 'https://auth.recall.local';
-const audience = process.env.AUTH_AUDIENCE ?? 'recall';
+const secret = process.env.AUTH_JWT_SECRET ?? 'synapse-local-development-secret-change-before-sharing';
+const issuer = process.env.AUTH_ISSUER ?? 'https://auth.synapse.local';
+const audience = process.env.AUTH_AUDIENCE ?? 'synapse';
 const organizationId = process.env.RECALL_LOAD_ORG ?? `load-org-${Date.now()}`;
 const developerId = 'load-developer';
 const sessionCount = Number(process.env.RECALL_LOAD_SESSIONS ?? 120);
@@ -59,7 +59,7 @@ function mintToken() {
     organization_id: organizationId,
     team_ids: ['load-team'],
     roles: ['developer'],
-    repository_access: ['recall/load'],
+    repository_access: ['synapse/load'],
     iss: issuer,
     aud: audience,
     iat: Math.floor(Date.now() / 1000),
@@ -139,7 +139,7 @@ function buildSession(index) {
       aiModel: 'load-test',
       tags: [topic.entity.toLowerCase(), 'load-test'],
     },
-    git: { repository: 'recall/load', branch: 'main', filesTouched: [], codeDiffs: [] },
+    git: { repository: 'synapse/load', branch: 'main', filesTouched: [], codeDiffs: [] },
     startedAt: messages[0].timestamp,
     endedAt: messages.at(-1).timestamp,
     totalTokens: 480,

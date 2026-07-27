@@ -47,7 +47,7 @@ secret (`existing`), or via External Secrets (`external-secrets`):
 | `ANTHROPIC_API_KEY` | if `llm.provider=claude` | |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | only without workload identity | Prefer IRSA / GKE Workload Identity |
 
-A separate migrator secret (`migration.secretName`, default `recall-migrator`)
+A separate migrator secret (`migration.secretName`, default `synapse-migrator`)
 holds the elevated `DATABASE_URL` used by the migration Job only.
 
 Embeddings are fixed at **1536 dimensions** for every provider. The chart fails
@@ -59,22 +59,22 @@ rendering if a profile sets anything else, and the service refuses to start.
 
 ```bash
 # 1. Build and push images with immutable tags (latest is rejected by the chart)
-docker build -f infra/docker/Dockerfile.api -t registry.internal/recall/api:0.1.0 .
-docker build -f infra/docker/Dockerfile.worker -t registry.internal/recall/worker:0.1.0 .
-docker build -f deploy/patroni/Dockerfile -t registry.internal/recall/patroni:0.1.0 deploy/patroni/
-docker push registry.internal/recall/api:0.1.0   # repeat for worker, patroni
+docker build -f infra/docker/Dockerfile.api -t registry.internal/synapse/api:0.1.0 .
+docker build -f infra/docker/Dockerfile.worker -t registry.internal/synapse/worker:0.1.0 .
+docker build -f deploy/patroni/Dockerfile -t registry.internal/synapse/patroni:0.1.0 deploy/patroni/
+docker push registry.internal/synapse/api:0.1.0   # repeat for worker, patroni
 
 # 2. Deploy Patroni, Redis, and MinIO first, then create the two secrets
-#    (recall-runtime and recall-migrator).
+#    (synapse-runtime and synapse-migrator).
 
 # 3. Deploy the service
-helm install recall ./deploy/helm/recall \
-  -f ./deploy/helm/recall/profiles/on-prem.yaml \
+helm install synapse ./deploy/helm/synapse \
+  -f ./deploy/helm/synapse/profiles/on-prem.yaml \
   --set global.imageRegistry=registry.internal \
-  --namespace recall --create-namespace
+  --namespace synapse --create-namespace
 ```
 
-Air-gapped: pre-pull `recall/api`, `recall/worker`, `pgvector/pgvector:0.8.1-pg16`,
+Air-gapped: pre-pull `synapse/api`, `synapse/worker`, `pgvector/pgvector:0.8.1-pg16`,
 `redis:7.4.2-alpine`, `minio/minio`, and your embedding server image. Any
 embedding model may be used **provided it emits 1536 dimensions**.
 
@@ -117,7 +117,7 @@ credential. Migrations do **not** run on API or worker startup.
 
 ```bash
 # Manual / out-of-band
-MIGRATION_DATABASE_URL=postgresql://recall_migrator:...@host/recall npm run migrate
+MIGRATION_DATABASE_URL=postgresql://synapse_migrator:...@host/synapse npm run migrate
 ```
 
 **`helm rollback` does not revert schema.** Use expand/contract: deploy the
@@ -138,7 +138,7 @@ Or enable the Job: `--set embeddingBackfill.enabled=true --set embeddingBackfill
 
 ## Knowledge compaction
 
-A weekly CronJob (`recall-compaction`) reduces token usage over time through
+A weekly CronJob (`synapse-compaction`) reduces token usage over time through
 three phases:
 
 1. **Cluster synthesis** — clusters with ≥5 members are synthesized into one
@@ -170,7 +170,7 @@ compaction:
 Manual trigger:
 
 ```bash
-kubectl create job --from=cronjob/recall-compaction compaction-manual-$(date +%s)
+kubectl create job --from=cronjob/synapse-compaction compaction-manual-$(date +%s)
 ```
 
 Per-organization advisory locking ensures concurrent pods cannot collide; a
@@ -240,7 +240,7 @@ verification, REST API authentication, and WAL archiving via pgBackRest.
 deploy/patroni/
 ├── patroni.yaml      # cluster config; all credentials/paths injected via env
 ├── pgbackrest.conf   # WAL archive + retention; repository injected via PGBACKREST_*
-├── post-init.sh      # creates recall database, recall_migrator and recall_app roles, extensions
+├── post-init.sh      # creates synapse database, synapse_migrator and synapse_app roles, extensions
 └── Dockerfile        # postgres 16.9 + pgvector + pinned Patroni + pgBackRest
 ```
 

@@ -1,9 +1,9 @@
 import { createHmac, randomUUID } from 'node:crypto';
 
 const apiUrl = process.env.RECALL_API_URL ?? 'http://localhost:3000';
-const secret = process.env.AUTH_JWT_SECRET ?? 'recall-local-development-secret-change-before-sharing';
-const issuer = process.env.AUTH_ISSUER ?? 'https://auth.recall.local';
-const audience = process.env.AUTH_AUDIENCE ?? 'recall';
+const secret = process.env.AUTH_JWT_SECRET ?? 'synapse-local-development-secret-change-before-sharing';
+const issuer = process.env.AUTH_ISSUER ?? 'https://auth.synapse.local';
+const audience = process.env.AUTH_AUDIENCE ?? 'synapse';
 const organizationId = `smoke-org-${Date.now()}`;
 const developerId = 'smoke-developer';
 
@@ -14,7 +14,7 @@ const payload = encode({
   organization_id: organizationId,
   team_ids: ['smoke-team'],
   roles: ['developer'],
-  repository_access: ['recall/smoke'],
+  repository_access: ['synapse/smoke'],
   iss: issuer,
   aud: audience,
   iat: Math.floor(Date.now() / 1000),
@@ -57,7 +57,7 @@ const upload = await request('/api/v1/sessions', {
     clientId,
     messages,
     metadata: {
-      project: 'recall-smoke',
+      project: 'synapse-smoke',
       language: 'typescript',
       languages: ['typescript'],
       frameworks: ['fastify'],
@@ -65,7 +65,7 @@ const upload = await request('/api/v1/sessions', {
       aiModel: 'local-smoke',
       tags: ['smoke-test'],
     },
-    git: { repository: 'recall/smoke', branch: 'main', filesTouched: [], codeDiffs: [] },
+    git: { repository: 'synapse/smoke', branch: 'main', filesTouched: [], codeDiffs: [] },
     startedAt: messages[0].timestamp,
     endedAt: messages.at(-1).timestamp,
     totalTokens: 200,

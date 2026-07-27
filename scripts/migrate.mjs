@@ -15,7 +15,7 @@ if (!connectionString) {
 
 const client = new Client({
   connectionString,
-  application_name: 'recall-migrator',
+  application_name: 'synapse-migrator',
   ssl: process.env.PGSSLMODE === 'disable' ? false : undefined,
 });
 
@@ -28,7 +28,7 @@ async function relationExists(name) {
 
 async function main() {
   await client.connect();
-  await client.query("SELECT pg_advisory_lock(hashtext('recall-schema-migrations'))");
+  await client.query("SELECT pg_advisory_lock(hashtext('synapse-schema-migrations'))");
   try {
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -89,7 +89,7 @@ async function main() {
       }
     }
   } finally {
-    await client.query("SELECT pg_advisory_unlock(hashtext('recall-schema-migrations'))");
+    await client.query("SELECT pg_advisory_unlock(hashtext('synapse-schema-migrations'))");
     await client.end();
   }
 }

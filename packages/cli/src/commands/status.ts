@@ -22,7 +22,7 @@ export const statusCommand = new Command('status')
         }
       }
 
-      console.log(chalk.dim(`\n  URL: ${process.env.RECALL_API_URL ?? 'http://localhost:3000'}`));
+      console.log(chalk.dim(`\n  URL: ${process.env.SYNAPSE_API_URL ?? 'http://localhost:3000'}`));
       console.log(chalk.dim(`  Version: ${health.version ?? 'unknown'}`));
     } catch (error: any) {
       spinner.fail(`Cannot reach API: ${error.message}`);

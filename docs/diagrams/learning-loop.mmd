@@ -1,0 +1,114 @@
+%% Learning Loop — Automatic Knowledge Evolution
+%% The closed cycle that makes the system get smarter with every interaction.
+%%
+%% Three learning speeds:
+%%   Inline (every ingestion) → On Reflect (every query) → Batch (weekly)
+
+flowchart TB
+    %% ─── Entry Points ───────────────────────────────────────────
+    IDE["IDE Plugin / MCP"]
+    CLI["CLI / Slack"]
+
+    %% ─── RETAIN ─────────────────────────────────────────────────
+    subgraph RETAIN["① RETAIN (capture)"]
+        direction TB
+        PASSIVE["Passive capture<br/>(auto on session end)"]
+        ACTIVE["Active capture<br/>(developer clicks save)"]
+        AMBIENT["Ambient capture<br/>(terminal, browser, meetings)"]
+    end
+
+    %% ─── EXTRACT ────────────────────────────────────────────────
+    subgraph EXTRACT["② EXTRACT (facts + narratives)"]
+        direction TB
+        LLM_FACT["LLM fact extraction<br/>(atomic: 10-50 tokens)"]
+        HEUR_FACT["Heuristic fallback<br/>(pattern matching)"]
+        NARR_FACT["Narrative extraction<br/>(coarse: 50-200 tokens)"]
+        EMBED["Embed all facts<br/>(1536-dim vectors)"]
+        DEDUP["Deduplicate<br/>(cosine > 0.95 = skip)"]
+    end
+
+    %% ─── REINFORCE ──────────────────────────────────────────────
+    subgraph REINFORCE["③ REINFORCE (opinions)"]
+        direction TB
+        FIND_OP["Find opinions with<br/>overlapping entities"]
+        ASSESS["LLM assess:<br/>REINFORCE / WEAKEN /<br/>CONTRADICT / NEUTRAL"]
+        UPDATE_CONF["Update confidence<br/>±0.08 per evidence"]
+    end
+
+    %% ─── OBSERVE ────────────────────────────────────────────────
+    subgraph OBSERVE["④ OBSERVE (entity summaries)"]
+        direction TB
+        CHECK_ENT["Entity has ≥3 facts?"]
+        GEN_OBS["LLM synthesize<br/>concise summary"]
+        STORE_OBS["Store/update<br/>observation"]
+    end
+
+    %% ─── RECALL ─────────────────────────────────────────────────
+    subgraph RECALL["⑤ RECALL (5-signal retrieval)"]
+        direction TB
+        SEM["Semantic<br/>(pgvector ANN)"]
+        KW["Keyword<br/>(BM25 FTS)"]
+        ENT["Entity match"]
+        TEMP["Temporal score"]
+        GRAPH["Graph expansion<br/>(conditional)"]
+        RRF["RRF fusion +<br/>ranking + rerank"]
+    end
+
+    %% ─── REFLECT ────────────────────────────────────────────────
+    subgraph REFLECT["⑥ REFLECT (LLM reasoning)"]
+        direction TB
+        BUILD_CTX["Build context:<br/>facts + chunks + observations"]
+        LLM_SYNTH["LLM synthesize answer"]
+        PARSE["Parse: answer +<br/>confidence + reasoning"]
+    end
+
+    %% ─── WRITE-BACK ─────────────────────────────────────────────
+    subgraph WRITEBACK["⑦ WRITE-BACK (learning)"]
+        direction TB
+        EXTRACT_INS["LLM extract insights<br/>from answer"]
+        FILTER_INS["Filter: confidence ≥0.6,<br/>max 3, not already known"]
+        STORE_INS["Store as new facts<br/>(type: opinion/lesson/pattern)"]
+        BOOST["Boost source usage<br/>(incrementUsage)"]
+    end
+
+    %% ─── Connections ────────────────────────────────────────────
+    IDE --> RETAIN
+    CLI --> RETAIN
+
+    RETAIN --> EXTRACT
+    EXTRACT --> REINFORCE
+    REINFORCE --> OBSERVE
+
+    IDE -->|"POST /api/v1/reflect"| RECALL
+    OBSERVE -.->|observations enrich results| RECALL
+    RECALL --> REFLECT
+    REFLECT --> WRITEBACK
+
+    %% The loop closes here
+    WRITEBACK -->|"new facts feed back"| RETAIN
+    WRITEBACK -->|"source boost"| RECALL
+
+    %% ─── Batch (weekly) ─────────────────────────────────────────
+    BATCH["⏰ Weekly CronJob"]
+    BATCH -->|"full sweep"| REINFORCE
+    BATCH -->|"refresh stale"| OBSERVE
+    BATCH -->|"synthesize clusters"| EXTRACT
+
+    %% ─── Styling ────────────────────────────────────────────────
+    classDef entry fill:#e1f5fe,stroke:#01579b
+    classDef retain fill:#fff3e0,stroke:#e65100
+    classDef extract fill:#f3e5f5,stroke:#4a148c
+    classDef reinforce fill:#fce4ec,stroke:#880e4f
+    classDef observe fill:#e8f5e9,stroke:#1b5e20
+    classDef recall fill:#e3f2fd,stroke:#0d47a1
+    classDef reflect fill:#fff8e1,stroke:#f57f17
+    classDef writeback fill:#ffebee,stroke:#b71c1c
+
+    class IDE,CLI entry
+    class RETAIN retain
+    class EXTRACT extract
+    class REINFORCE reinforce
+    class OBSERVE observe
+    class RECALL recall
+    class REFLECT reflect
+    class WRITEBACK writeback

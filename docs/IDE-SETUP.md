@@ -21,12 +21,12 @@ Add to `.kiro/settings/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "recall": {
+    "synapse": {
       "command": "node",
-      "args": ["/path/to/recall/packages/mcp-server/dist/index.js"],
+      "args": ["/path/to/synapse/packages/mcp-server/dist/index.js"],
       "env": {
-        "RECALL_API_URL": "https://ctx.internal.company.com",
-        "RECALL_TOKEN": "<your-token>",
+        "SYNAPSE_API_URL": "https://ctx.internal.company.com",
+        "SYNAPSE_TOKEN": "<your-token>",
         "DEVELOPER_ID": "<your-alias>",
         "ORGANIZATION_ID": "<your-org>"
       }
@@ -46,12 +46,12 @@ Add to Cursor's MCP settings (Settings → MCP Servers → Add):
 
 ```json
 {
-  "recall": {
+  "synapse": {
     "command": "node",
-    "args": ["/path/to/recall/packages/mcp-server/dist/index.js"],
+    "args": ["/path/to/synapse/packages/mcp-server/dist/index.js"],
     "env": {
-      "RECALL_API_URL": "https://ctx.internal.company.com",
-      "RECALL_TOKEN": "<your-token>",
+      "SYNAPSE_API_URL": "https://ctx.internal.company.com",
+      "SYNAPSE_TOKEN": "<your-token>",
       "DEVELOPER_ID": "<your-alias>",
       "ORGANIZATION_ID": "<your-org>"
     }
@@ -70,12 +70,12 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "recall": {
+    "synapse": {
       "command": "node",
-      "args": ["/path/to/recall/packages/mcp-server/dist/index.js"],
+      "args": ["/path/to/synapse/packages/mcp-server/dist/index.js"],
       "env": {
-        "RECALL_API_URL": "https://ctx.internal.company.com",
-        "RECALL_TOKEN": "<your-token>",
+        "SYNAPSE_API_URL": "https://ctx.internal.company.com",
+        "SYNAPSE_TOKEN": "<your-token>",
         "DEVELOPER_ID": "<your-alias>",
         "ORGANIZATION_ID": "<your-org>"
       }
@@ -92,12 +92,12 @@ Add via Windsurf MCP configuration (similar to Cursor):
 
 ```json
 {
-  "recall": {
+  "synapse": {
     "command": "node",
     "args": ["/path/to/packages/mcp-server/dist/index.js"],
     "env": {
-      "RECALL_API_URL": "https://ctx.internal.company.com",
-      "RECALL_TOKEN": "<your-token>",
+      "SYNAPSE_API_URL": "https://ctx.internal.company.com",
+      "SYNAPSE_TOKEN": "<your-token>",
       "DEVELOPER_ID": "<your-alias>",
       "ORGANIZATION_ID": "<your-org>"
     }
@@ -117,12 +117,12 @@ Settings → Cline → MCP Servers → Add the same config as above.
 ```json
 {
   "servers": {
-    "recall": {
+    "synapse": {
       "command": "node",
       "args": ["./packages/mcp-server/dist/index.js"],
       "env": {
-        "RECALL_API_URL": "https://ctx.internal.company.com",
-        "RECALL_TOKEN": "<your-token>",
+        "SYNAPSE_API_URL": "https://ctx.internal.company.com",
+        "SYNAPSE_TOKEN": "<your-token>",
         "DEVELOPER_ID": "<your-alias>",
         "ORGANIZATION_ID": "<your-org>"
       }
@@ -158,16 +158,16 @@ For developers who prefer the command line:
 cd packages/cli && npm install && npm link
 
 # Configure
-export RECALL_API_URL=https://ctx.internal.company.com
-export RECALL_TOKEN=your-token
+export SYNAPSE_API_URL=https://ctx.internal.company.com
+export SYNAPSE_TOKEN=your-token
 export DEVELOPER_ID=your-alias
 export ORGANIZATION_ID=your-org
 
 # Use
-recall search "how do we deploy to production?"
-recall facts --entity Kafka
-recall history PostgreSQL
-recall insight "Lambda cold start takes 3s in VPC due to ENI" --type lesson
+synapse search "how do we deploy to production?"
+synapse facts --entity Kafka
+synapse history PostgreSQL
+synapse insight "Lambda cold start takes 3s in VPC due to ENI" --type lesson
 ```
 
 ---
@@ -205,12 +205,12 @@ Over time:
 
 **"No results found"**
 - The knowledge base is empty until sessions are captured
-- Try saving a session first: use `save_session` tool or `recall capture` CLI
+- Try saving a session first: use `save_session` tool or `synapse capture` CLI
 
 **"Connection refused"**
 - Ensure the API server is running (`npm run dev` in the root)
-- Check `RECALL_API_URL` points to the running server
+- Check `SYNAPSE_API_URL` points to the running server
 
 **"Unauthorized"**
-- Verify `RECALL_TOKEN` is a valid token
+- Verify `SYNAPSE_TOKEN` is a valid token
 - In local dev, the token can be any non-empty string (auth is disabled)

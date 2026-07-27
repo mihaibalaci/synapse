@@ -22,6 +22,6 @@ kind: AuthorizationPolicy
 metadata: { name: {{ .Release.Name }}-worker-deny-ingress }
 spec:
   selector:
-    matchLabels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: worker }
+    matchLabels: { app.kubernetes.io/name: synapse, app.kubernetes.io/component: worker }
   rules: []
 {{- end }}

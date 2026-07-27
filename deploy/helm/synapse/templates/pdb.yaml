@@ -5,7 +5,7 @@ metadata: { name: {{ .Release.Name }}-api }
 spec:
   minAvailable: {{ .Values.availability.podDisruptionBudget.apiMinAvailable }}
   selector:
-    matchLabels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: api }
+    matchLabels: { app.kubernetes.io/name: synapse, app.kubernetes.io/component: api }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -13,5 +13,5 @@ metadata: { name: {{ .Release.Name }}-worker }
 spec:
   minAvailable: {{ .Values.availability.podDisruptionBudget.workerMinAvailable }}
   selector:
-    matchLabels: { app.kubernetes.io/name: recall, app.kubernetes.io/component: worker }
+    matchLabels: { app.kubernetes.io/name: synapse, app.kubernetes.io/component: worker }
 {{- end }}

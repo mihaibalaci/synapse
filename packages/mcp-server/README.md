@@ -20,7 +20,7 @@ Add to your MCP client configuration (e.g. `.kiro/settings/mcp.json`):
 ```json
 {
   "mcpServers": {
-    "recall": {
+    "synapse": {
       "command": "node",
       "args": ["path/to/packages/mcp-server/dist/index.js"],
       "env": {

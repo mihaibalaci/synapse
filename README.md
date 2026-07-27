@@ -1,13 +1,14 @@
-# Recall
+# Synapse
 
-**The memory layer for AI first engineering teams.**
+**The memory layer that learns.**
 
-AI context, stored. Knowledge, recalled.
+Hundreds of engineers, creating a neural network of knowledge.
 
-A company-scale memory system that continuously captures AI coding sessions from 1000+ engineers,
+A team-scale memory system that continuously captures AI coding sessions,
 extracts atomic facts and knowledge, deduplicates across the organization, and provides
-sub-200ms retrieval. Over time, token usage per query *decreases* as the system compacts
-collective knowledge into canonical answers.
+sub-200ms retrieval. Over time, the system *learns* — token usage per query decreases
+as collective knowledge compacts into canonical answers, opinions strengthen with evidence,
+and observations sharpen through reflection.
 
 ## The Problem
 
@@ -18,13 +19,13 @@ same problem someone else already solved.
 
 ## The Solution
 
-**Capture** (like Pieces): Passively record every AI session in the background — no developer action needed.
+**Capture**: Passively record every AI session in the background — no developer action needed.
 
 **Remember**: Extract atomic facts, link entities, build temporal chains. ADD-only — never overwrite history.
 
-**Share** (unique to us): Deduplicate across entire engineering organisations. One canonical answer per topic instead of 500 copies.
+**Share**: Deduplicate across entire engineering organizations. One canonical answer per topic instead of hundreds of copies.
 
-**Compress** (unique to us): Weekly compaction turns clusters into concise canonical articles. Knowledge gets *smaller and better* over time.
+**Learn**: The system gets smarter with every interaction. Reflect produces insights, opinions evolve with evidence, observations sharpen over time.
 
 ```
 Month 1:  12,000 tokens/query (raw replay — no system)
@@ -54,12 +55,12 @@ Add to your MCP configuration (e.g. `.kiro/settings/mcp.json`):
 ```json
 {
   "mcpServers": {
-    "recall": {
+    "synapse": {
       "command": "node",
       "args": ["<path-to>/packages/mcp-server/dist/index.js"],
       "env": {
-        "RECALL_API_URL": "https://ctx.internal.company.com",
-        "RECALL_TOKEN": "your-token",
+        "SYNAPSE_API_URL": "https://synapse.internal.company.com",
+        "SYNAPSE_TOKEN": "your-token",
         "DEVELOPER_ID": "your-id",
         "ORGANIZATION_ID": "your-org"
       }
@@ -68,28 +69,29 @@ Add to your MCP configuration (e.g. `.kiro/settings/mcp.json`):
 }
 ```
 
-That's it. Your AI agent now has 6 tools: `search_knowledge`, `get_context`, `get_facts`, `get_fact_history`, `save_session`, `save_insight`. It uses them automatically when relevant.
+Your AI agent now has 7 tools: `search_knowledge`, `get_context`, `get_facts`, `get_fact_history`, `reflect_on_knowledge`, `save_session`, `save_insight`. They activate automatically when relevant.
 
 ### Option B: CLI (for terminal workflows)
 
 ```bash
 cd packages/cli && npm install && npm run build
-export RECALL_API_URL=https://ctx.internal.company.com
-export RECALL_TOKEN=your-token
+export SYNAPSE_API_URL=https://synapse.internal.company.com
+export SYNAPSE_TOKEN=your-token
 
-recall search "how do we handle auth?"
-recall facts --entity Lambda --type lesson
-recall history Kafka
-recall insight "We decided to use gRPC for service-to-service" --type decision
+synapse search "how do we handle auth?"
+synapse facts --entity Lambda --type lesson
+synapse history Kafka
+synapse reflect "why did we switch to Kafka?"
+synapse insight "We decided to use gRPC for service-to-service" --type decision
 ```
 
 ### Option C: Slack (for team knowledge sharing)
 
 Deploy the Slack bot and engineers get:
-- `/recall <question>` — Search from any channel
-- `@recall-bot <question>` — Get answers in-thread
+- `/synapse <question>` — Search from any channel
+- `@synapse <question>` — Get answers in-thread
 - 📌 reaction — Capture any message to the knowledge base
-- `/recall-save` — Capture a full discussion thread
+- `/synapse-save` — Capture a full discussion thread
 
 ### Option D: Dashboard (for browsing and analytics)
 
@@ -117,12 +119,12 @@ Browse all knowledge, view facts, check entity history, see analytics.
 │  ├─ Segmenter                │  (pgvector+FTS+graph)├─ Entity Linker│
 │  ├─ Embedding                ├─ S3 (raw)           ├─ Temporal Chain │
 │  ├─ Deduplication            └─ Redis (cache+queue)├─ Compaction    │
-│  └─ Tier classifier                                └─ Dedup Engine  │
+│  └─ Tier classifier                                └─ Learning Loop │
 │                                                                      │
 │  5-Signal Retrieval: Semantic + Keyword + Entity + Temporal + Graph  │
 │  Ranking Engine: learned weights + cross-encoder rerank              │
 └────────────────────────────────┬────────────────────────────────────┘
-                                 │ /search, /context, /facts
+                                 │ /search, /context, /facts, /reflect
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        CONSUMER LAYER                                 │
@@ -141,12 +143,29 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Consolidated storage** — Postgres handles vectors, full-text, graph, and metadata in one DB. [ADR-001](docs/ADR-001-storage-consolidation.md)
 - **Tiered ingestion** — Cheap heuristic path for all; LLM extraction only for high-value (~20%). [ADR-002](docs/ADR-002-tiered-ingestion.md)
 - **Knowledge compaction** — Weekly job synthesizes cluster canonical articles. Index grows sub-linearly.
+- **Automatic Learning Loop** — Closed-cycle intelligence: reflect produces insights → stored as facts → influence future retrieval → better answers. [ADR-004](docs/ADR-004-hindsight-inspired-improvements.md)
+
+## Learning Loop
+
+The system gets smarter with every interaction through a closed learning cycle:
+
+```
+RETAIN → EXTRACT → REINFORCE → OBSERVE → RECALL → REFLECT → WRITE-BACK → RETAIN
+```
+
+| Speed | When | What Happens |
+|-------|------|------|
+| **Inline** | Every fact extraction | New facts evaluate against existing opinions (reinforce/weaken/contradict). Observations queued for refresh. |
+| **On reflect** | Every `/api/v1/reflect` call | High-confidence answers → extract insights → store as new facts. Source facts get usage boost. |
+| **Batch** | Weekly compaction | Full opinion reinforcement sweep. All stale observations refreshed. New entities discovered. |
+
+Monitor learning health: `GET /api/v1/stats/learning`
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Full system design (v3), memory model, data flow |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Full system design (v3), memory model, data flow, learning loop |
 | [docs/IDE-SETUP.md](docs/IDE-SETUP.md) | How to connect any IDE (Kiro, Cursor, Windsurf, VS Code, CLI) |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment guide (on-prem, AWS, GCP, hybrid) |
 | [docs/API.md](docs/API.md) | REST API reference with examples |
@@ -156,6 +175,7 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md)
 | [docs/ADR-001](docs/ADR-001-storage-consolidation.md) | Storage consolidation decision |
 | [docs/ADR-002](docs/ADR-002-tiered-ingestion.md) | Tiered ingestion decision |
 | [docs/ADR-003](docs/ADR-003-memory-architecture-synthesis.md) | Memory architecture synthesis (v3) |
+| [docs/ADR-004](docs/ADR-004-hindsight-inspired-improvements.md) | Hindsight-inspired improvements (learning loop, reflect, observations) |
 | [packages/mcp-server/README.md](packages/mcp-server/README.md) | MCP Server setup + tool reference |
 
 ## Packages
@@ -164,7 +184,7 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md)
 |---------|---------|-----|
 | `src/` | Control plane (API + ingestion + retrieval) | `npm run dev` |
 | `packages/mcp-server` | MCP tools for AI agents | Add to IDE mcp.json |
-| `packages/cli` | Terminal search + capture (`ctx`) | `recall search "query"` |
+| `packages/cli` | Terminal search + capture | `synapse search "query"` |
 | `packages/slack-bot` | Slack integration | `npm start` (port 3001) |
 | `packages/dashboard` | Web UI (search, facts, analytics) | `npm run dev` (port 3100) |
 
@@ -173,10 +193,10 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md)
 | Target | Method | Command |
 |--------|--------|---------|
 | **Local dev** | Docker Compose | `docker compose -f infra/docker/docker-compose.yml up -d` |
-| **On-prem K8s** | Helm + Patroni | `helm install ctx ./deploy/helm/recall -f profiles/on-prem.yaml` |
+| **On-prem K8s** | Helm + Patroni | `helm install synapse ./deploy/helm/synapse -f profiles/on-prem.yaml` |
 | **AWS** | Terraform + Helm | `terraform apply -var-file=environments/aws-prod.tfvars` |
 | **GCP** | Terraform + Helm | `terraform apply -var-file=environments/gcp-prod.tfvars` |
-| **Hybrid** | Helm | `helm install ctx ... -f profiles/hybrid.yaml` |
+| **Hybrid** | Helm | `helm install synapse ... -f profiles/hybrid.yaml` |
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full instructions.
 
@@ -191,6 +211,9 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full instructions.
 | POST | `/api/v1/search` | Advanced search with 5-signal fusion |
 | GET | `/api/v1/facts` | Query atomic facts by entity/time/type |
 | GET | `/api/v1/facts/:entity/history` | Temporal evolution of an entity |
+| POST | `/api/v1/reflect` | Reflect: retrieve + reason + learn (learning loop) |
+| GET | `/api/v1/observations/:entity` | Get pre-computed entity summary |
+| GET | `/api/v1/stats/learning` | Learning loop health and metrics |
 | POST | `/api/v1/feedback` | Record retrieval feedback |
 | POST | `/api/v1/sessions` | Legacy session upload (active capture) |
 | GET | `/api/v1/sessions/:id/status` | Check processing status |
@@ -212,20 +235,10 @@ cache cleared between runs except where noted. Reproduce with
 | 32 | 3,962 | 159.2ms | 223.9ms | 263.3ms | 197 rps |
 | **warm cache (c=16)** | **36,378** | **8.5ms** | **11.8ms** | **15.3ms** | **1,818 rps** |
 
-- Throughput saturates near **200 rps per API process**; beyond that, latency
-  is event-loop queueing, so capacity scales with replicas.
+- Throughput saturates near **200 rps per API process**; capacity scales with replicas.
 - Warm cache hit rate: **99.95%** on repeated queries with the same ACL context.
 - Zero errors across all runs; zero empty results.
 - PostgreSQL executes the vector ANN query in ~2ms with all buffers cached.
-- Sub-200ms p95 target is met at ≤8 concurrent requests per process; at 16 it
-  reaches 134ms. Real production should run ≥3 replicas to stay within budget.
-
-**What was optimized:**
-- Retrieval projections omit the 1536-dimension embedding column (~15KB/row,
-  ~120 candidates per query) — this alone gave 2.7× throughput.
-- Candidate hydration batched into one `WHERE id = ANY(...)` per signal.
-- Query embeddings cached in a bounded in-process LRU (2000 entries).
-- Signals run in parallel on separate pooled connections.
 
 See [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full request and failure
 paths with sequence diagrams.
