@@ -267,4 +267,4 @@ paths with sequence diagrams.
 
 ## License
 
-Internal / Proprietary
+Built by MihaiBalaci
