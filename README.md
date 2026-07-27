@@ -6,7 +6,7 @@ Hundreds of engineers, creating a neural network of knowledge.
 
 A team-scale memory system that continuously captures AI coding sessions,
 extracts atomic facts and knowledge, deduplicates across the organization, and provides
-sub-200ms retrieval. Over time, the system *learns* — token usage per query decreases
+sub-200ms retrieval. Over time, the system *learns*,  token usage per query decreases
 as collective knowledge compacts into canonical answers, opinions strengthen with evidence,
 and observations sharpen through reflection.
 

@@ -102,7 +102,7 @@ export class ObservationRepository {
           source_fact_ids, source_fact_count, embedding,
           created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       ON CONFLICT (organization_id, LOWER(entity_name))
+       ON CONFLICT (organization_id, (LOWER(entity_name)))
        DO UPDATE SET
          summary = EXCLUDED.summary,
          source_fact_ids = EXCLUDED.source_fact_ids,

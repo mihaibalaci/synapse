@@ -607,13 +607,12 @@ export async function initializeSchema(): Promise<void> {
       source_fact_count INTEGER NOT NULL DEFAULT 0,
       embedding vector(1536),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (organization_id, LOWER(entity_name))
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
   await query(`
-    CREATE INDEX IF NOT EXISTS idx_observations_org_entity
-      ON observations(organization_id, (LOWER(entity_name)))
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_org_entity_unique
+      ON observations(organization_id, LOWER(entity_name))
   `);
 
   // Add security columns for databases initialized by an older release.

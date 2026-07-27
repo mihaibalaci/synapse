@@ -1,13 +1,13 @@
 /**
- * API client for the dashboard — wraps fetch calls to the Context Store API.
+ * API client for the dashboard — wraps fetch calls to the Synapse API.
  */
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
 
 export async function api(path: string, options?: RequestInit): Promise<any> {
   const token = typeof window !== 'undefined'
-    ? window.localStorage.getItem('recall_token')
-    : process.env.NEXT_PUBLIC_RECALL_TOKEN;
+    ? window.localStorage.getItem('synapse_token')
+    : process.env.NEXT_PUBLIC_SYNAPSE_TOKEN;
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
     headers: {
@@ -62,4 +62,20 @@ export async function submitFeedback(resultId: string, action: string) {
       action,
     }),
   });
+}
+
+
+// ─── Learning Loop API ───────────────────────────────────────────────────────
+
+export async function getLearningMetrics() {
+  return api('/api/v1/stats/learning');
+}
+
+export async function triggerLearningCycle() {
+  return api('/api/v1/stats/learning/trigger', { method: 'POST' });
+}
+
+export async function getObservations(entities: string[]) {
+  const qs = entities.length > 0 ? `?entities=${entities.join(',')}` : '';
+  return api(`/api/v1/observations${qs}`);
 }
