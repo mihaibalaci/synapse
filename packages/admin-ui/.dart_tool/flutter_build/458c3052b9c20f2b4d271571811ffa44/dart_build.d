@@ -1,1 +1,0 @@
- /Users/mbalaci/AI_projects/AI\ memory/synapse/packages/admin-ui/.dart_tool/flutter_build/458c3052b9c20f2b4d271571811ffa44/dart_build_result.json:  /Users/mbalaci/AI_projects/AI\ memory/synapse/packages/admin-ui/.dart_tool/package_config.json /Users/mbalaci/AI_projects/AI\ memory/synapse/packages/admin-ui/pubspec.yaml /opt/homebrew/share/flutter/bin/cache/dart-sdk/version

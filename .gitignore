@@ -1,15 +1,26 @@
+# Build artifacts
+/go/synapse
+/go/synapse-linux
+/packages/retrieval-engine/target/
+/packages/retrieval-engine/*.node
+/packages/admin-ui/build/
+/packages/admin-ui/.dart_tool/
+/packages/compaction-go/synapse-compaction
+/packages/compaction-go/synapse-compaction-linux
+
+# Dependencies
 node_modules/
-dist/
+.dart_tool/
+
+# Environment
 .env
-*.log
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
 .DS_Store
-packages/*/node_modules/
-packages/*/dist/
-packages/dashboard/.next/
-.next/
-coverage/
-*.tsbuildinfo
-deploy/terraform/.terraform/
-*.tfstate
-*.tfstate.*
-tfplan
+Thumbs.db

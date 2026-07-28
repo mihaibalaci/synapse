@@ -1,9 +1,0 @@
-node_modules
-dist
-.next
-.git
-.env
-*.log
-tests
-docs
-.DS_Store
