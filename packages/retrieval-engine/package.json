@@ -1,0 +1,22 @@
+{
+  "name": "@synapse/retrieval-engine",
+  "version": "0.1.0",
+  "description": "High-performance retrieval engine — Rust native module with parallel RRF fusion, ranking, and scoring",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "synapse-retrieval-engine",
+    "triples": {
+      "defaults": true,
+      "additional": []
+    }
+  },
+  "scripts": {
+    "build": "napi build --release --platform",
+    "build:debug": "napi build --platform",
+    "test": "node test.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  }
+}

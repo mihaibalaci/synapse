@@ -1,0 +1,25 @@
+[package]
+name = "synapse-retrieval-engine"
+version = "0.1.0"
+edition = "2024"
+description = "High-performance retrieval engine for Synapse — RRF fusion, ranking, and scoring with parallel execution"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", features = ["full"] }
+napi-derive = "2"
+rayon = "1.10"
+ordered-float = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
