@@ -451,6 +451,25 @@ This is achieved through:
 
 ---
 
+## Native Compute Layer (Rust + Go)
+
+CPU-bound operations are delegated to native code for parallel execution:
+
+| Module | Language | Functions | Performance |
+|--------|----------|-----------|-------------|
+| Retrieval Engine | Rust (napi-rs) | RRF fusion, composite ranking, temporal scoring, token packing | 1000 candidates in 4.8ms |
+| Dedup Pipeline | Rust (napi-rs) | MinHash (128 hashes), Jaccard, vector validation, local embeddings | 1000 texts MinHash in <500ms |
+| Graph Traversal | Rust (napi-rs) | Spreading activation, connectivity scoring | 1000-node/5000-edge in 3.5ms |
+| Compaction | Go (binary) | Parallel cluster synthesis, fact supersession, opinion reinforcement | 15x faster than serial Node.js |
+
+All Rust functions use Rayon for data parallelism across all available CPU cores.
+The Go compaction binary uses goroutines with bounded concurrency (configurable workers).
+
+Integration: Node.js handles I/O (DB, HTTP, cache) → calls Rust for compute → returns results.
+Fallback: if the native `.node` binary isn't available, the system falls back to pure JS automatically.
+
+---
+
 ## Technology Choices (v3 — Multi-Provider)
 
 | Component | Cloud Option | Self-Hosted Option |

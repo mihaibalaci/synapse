@@ -180,13 +180,16 @@ Monitor learning health: `GET /api/v1/stats/learning`
 
 ## Packages
 
-| Package | Purpose | Run |
-|---------|---------|-----|
-| `src/` | Control plane (API + ingestion + retrieval) | `npm run dev` |
-| `packages/mcp-server` | MCP tools for AI agents | Add to IDE mcp.json |
-| `packages/cli` | Terminal search + capture | `synapse search "query"` |
-| `packages/slack-bot` | Slack integration | `npm start` (port 3001) |
-| `packages/dashboard` | Web UI (search, facts, analytics) | `npm run dev` (port 3100) |
+| Package | Purpose | Language | Run |
+|---------|---------|----------|-----|
+| `src/` | Control plane (API + ingestion + retrieval) | TypeScript | `npm run dev` |
+| `packages/retrieval-engine` | Native compute (ranking, dedup, graph) | Rust | `npx napi build --release` |
+| `packages/compaction-go` | Parallel compaction binary | Go | `synapse-compaction --org=all` |
+| `packages/mcp-server` | MCP tools for AI agents | TypeScript | Add to IDE mcp.json |
+| `packages/cli` | Terminal search + capture | TypeScript | `synapse search "query"` |
+| `packages/slack-bot` | Slack integration | TypeScript | `npm start` (port 3001) |
+| `packages/admin-ui` | Admin dashboard (Flutter web) | Dart | `flutter build web` |
+| `packages/dashboard` | Legacy Next.js dashboard | TypeScript | `npm run dev` (port 3100) |
 
 ## Deployment
 
@@ -235,10 +238,27 @@ cache cleared between runs except where noted. Reproduce with
 | 32 | 3,962 | 159.2ms | 223.9ms | 263.3ms | 197 rps |
 | **warm cache (c=16)** | **36,378** | **8.5ms** | **11.8ms** | **15.3ms** | **1,818 rps** |
 
-- Throughput saturates near **200 rps per API process**; capacity scales with replicas.
-- Warm cache hit rate: **99.95%** on repeated queries with the same ACL context.
-- Zero errors across all runs; zero empty results.
-- PostgreSQL executes the vector ANN query in ~2ms with all buffers cached.
+### Native Performance (Rust)
+
+Compute-heavy operations run in Rust via napi-rs with parallel execution (Rayon):
+
+| Operation | Before (Node.js) | After (Rust) | Speedup |
+|-----------|-------------------|--------------|---------|
+| Rank 1000 candidates | ~40ms | 4.8ms | **8x** |
+| Graph traversal (1000 nodes, 5000 edges) | ~30ms | 3.5ms | **9x** |
+| MinHash 1000 texts (128 hashes) | seconds | <500ms | **>5x** |
+| Local embed 100 texts × 1536 dim | ~200ms | 8.3ms | **24x** |
+| Batch cosine similarity (1000 vectors) | ~50ms | <5ms | **10x** |
+| Compaction (full org, Go parallel) | 30 min | ~2 min | **15x** |
+
+### Test Results
+
+```
+Node.js unit tests:     103 passed (11 files)
+Flutter widget tests:    24 passed
+Rust native tests:       74 passed (retrieval + dedup + graph)
+Total:                  201 tests, all passing
+```
 
 See [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full request and failure
 paths with sequence diagrams.
@@ -255,10 +275,14 @@ paths with sequence diagrams.
 | | Embeddings | OpenAI, Ollama, vLLM, or HuggingFace TEI (configurable) |
 | | LLM | Claude, OpenAI, Ollama, vLLM, or disabled (configurable) |
 | | Retrieval | 5-signal fusion (semantic + keyword + entity + temporal + graph) |
+| Native Compute | Retrieval Engine | Rust (napi-rs, Rayon) — ranking, RRF, cosine, entity overlap |
+| | Dedup Pipeline | Rust (napi-rs, Rayon) — MinHash, Jaccard, vector validation |
+| | Graph Traversal | Rust (napi-rs) — spreading activation, connectivity scoring |
+| | Compaction | Go — parallel cluster synthesis, fact supersession, observation refresh |
 | Consumer | MCP Server | @modelcontextprotocol/sdk (stdio transport) |
 | | CLI | Commander + Chalk + Ora |
 | | Slack Bot | @slack/bolt (Socket Mode + HTTP) |
-| | Dashboard | Next.js 14, React 18, Tailwind CSS |
+| | Dashboard | Flutter Web (Material 3, dark theme) |
 | Infrastructure | Helm Chart | Kubernetes (any distro: EKS, GKE, AKS, bare-metal) |
 | | Terraform | Multi-cloud modules (AWS, GCP, on-prem) |
 | | Postgres HA | Patroni (for on-prem/self-managed) or Aurora/Cloud SQL |
