@@ -22,7 +22,7 @@ import { FactRepository } from '../storage/fact-repository.js';
 import { GraphRepository } from '../storage/graph-repository.js';
 import { SearchIndex } from '../storage/search-index.js';
 import { SearchCache } from '../storage/cache.js';
-import { RankingEngine } from './ranking.js';
+import { NativeRankingEngine } from './ranking-native.js';
 import { PermissionFilter } from './permission-filter.js';
 import { ObservationRepository } from '../storage/observation-repository.js';
 import {
@@ -82,7 +82,7 @@ export class RetrievalEngine {
   private graphRepo: GraphRepository;
   private searchIndex: SearchIndex;
   private searchCache: SearchCache;
-  private rankingEngine: RankingEngine;
+  private rankingEngine: NativeRankingEngine;
   private permissionFilter: PermissionFilter;
   private observationRepo: ObservationRepository;
 
@@ -93,7 +93,7 @@ export class RetrievalEngine {
     this.graphRepo = new GraphRepository();
     this.searchIndex = new SearchIndex();
     this.searchCache = new SearchCache();
-    this.rankingEngine = new RankingEngine();
+    this.rankingEngine = new NativeRankingEngine();
     this.permissionFilter = new PermissionFilter();
     this.observationRepo = new ObservationRepository();
   }
