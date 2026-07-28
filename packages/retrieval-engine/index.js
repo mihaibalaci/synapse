@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { computeMinhash, batchComputeMinhash, minhashJaccard, batchMinhashJaccard, scoreDedupCandidates, titleJaccardSimilarity, batchTitleSimilarity, validateEmbedding, batchValidateEmbeddings, generateLocalEmbeddings, fnv1AFingerprint, batchFnv1AFingerprint, rrfFuse, rankCandidates, packByTokenBudget, computeTemporalScores, batchCosineSimilarity, batchEntityOverlap } = nativeBinding
+const { computeMinhash, batchComputeMinhash, minhashJaccard, batchMinhashJaccard, scoreDedupCandidates, titleJaccardSimilarity, batchTitleSimilarity, validateEmbedding, batchValidateEmbeddings, generateLocalEmbeddings, fnv1AFingerprint, batchFnv1AFingerprint, spreadingActivation, computeGraphActivations, scoreByConnectivity, rrfFuse, rankCandidates, packByTokenBudget, computeTemporalScores, batchCosineSimilarity, batchEntityOverlap } = nativeBinding
 
 module.exports.computeMinhash = computeMinhash
 module.exports.batchComputeMinhash = batchComputeMinhash
@@ -324,6 +324,9 @@ module.exports.batchValidateEmbeddings = batchValidateEmbeddings
 module.exports.generateLocalEmbeddings = generateLocalEmbeddings
 module.exports.fnv1AFingerprint = fnv1AFingerprint
 module.exports.batchFnv1AFingerprint = batchFnv1AFingerprint
+module.exports.spreadingActivation = spreadingActivation
+module.exports.computeGraphActivations = computeGraphActivations
+module.exports.scoreByConnectivity = scoreByConnectivity
 module.exports.rrfFuse = rrfFuse
 module.exports.rankCandidates = rankCandidates
 module.exports.packByTokenBudget = packByTokenBudget

@@ -71,6 +71,55 @@ export declare function generateLocalEmbeddings(texts: Array<string>, dimensions
 export declare function fnv1AFingerprint(text: string): number
 /** Batch fingerprint computation in parallel. */
 export declare function batchFnv1AFingerprint(texts: Array<string>): Array<number>
+export interface GraphEdgeInput {
+  sourceId: string
+  targetId: string
+  edgeType: string
+  weight: number
+}
+export interface GraphNodeResult {
+  nodeId: string
+  activation: number
+  distance: number
+  pathType: string
+}
+export interface SpreadingActivationConfig {
+  /** Decay factor per hop (0-1, lower = faster decay) */
+  decay: number
+  /** Maximum traversal depth */
+  maxDepth: number
+  /** Minimum activation to continue exploring a node */
+  minActivation: number
+  /** Maximum results to return */
+  maxResults: number
+  /** Edge type multipliers (type → multiplier). Causal edges get boosted. */
+  edgeMultipliers: Record<string, number>
+}
+/**
+ * Perform spreading activation from seed nodes through the graph.
+ *
+ * Algorithm:
+ * 1. Initialize seed nodes with activation = 1.0
+ * 2. BFS: for each active node, propagate activation to neighbors
+ * 3. Activation decays by `decay * edge_weight * type_multiplier` per hop
+ * 4. Stop when activation falls below min_activation or max_depth reached
+ * 5. Return all visited nodes sorted by activation descending
+ *
+ * The adjacency list construction and initial setup run in parallel via Rayon.
+ */
+export declare function spreadingActivation(seedIds: Array<string>, edges: Array<GraphEdgeInput>, config: SpreadingActivationConfig): Array<GraphNodeResult>
+/**
+ * Compute activation scores for a batch of target nodes given seed activations.
+ * Used when you already know which nodes to score (e.g., from a DB query)
+ * and just need the activation math done in parallel.
+ */
+export declare function computeGraphActivations(seedActivations: Array<number>, distances: Array<number>, edgeWeights: Array<number>, decay: number): Array<number>
+/**
+ * Score nodes by their connectivity to seed nodes.
+ * For each candidate, count how many seeds it connects to and with what total weight.
+ * Runs in parallel across candidates.
+ */
+export declare function scoreByConnectivity(candidateIds: Array<string>, edges: Array<GraphEdgeInput>, seedIds: Array<string>): Array<number>
 export interface CandidateScores {
   semantic: number
   keyword: number

@@ -363,5 +363,148 @@ console.log('\nPerformance:');
 // ─── Summary ─────────────────────────────────────────────────────────────────
 console.log(`\n═══════════════════════════════════════════════════`);
 console.log(`Dedup Pipeline: ${dedupPassed} passed, ${dedupFailed} failed`);
-console.log(`Total: ${passed + dedupPassed} passed, ${failed + dedupFailed} failed`);
-process.exit((failed + dedupFailed) > 0 ? 1 : 0);
+// Don't exit — graph tests follow
+
+
+// ─── GRAPH TRAVERSAL TESTS ───────────────────────────────────────────────────
+
+import {
+  spreadingActivation,
+  computeGraphActivations,
+  scoreByConnectivity,
+} from './index.js';
+
+console.log('\n═══════════════════════════════════════════════════');
+console.log('Graph Traversal — Rust Native Tests');
+console.log('═══════════════════════════════════════════════════\n');
+
+let graphPassed = 0;
+let graphFailed = 0;
+
+function assert3(condition, msg) {
+  if (condition) { graphPassed++; console.log(`  ✓ ${msg}`); }
+  else { graphFailed++; console.error(`  ✗ ${msg}`); }
+}
+
+// ─── Spreading Activation ────────────────────────────────────────────────────
+console.log('Spreading Activation:');
+{
+  const edges = [
+    { sourceId: 'kafka', targetId: 'chunk-1', edgeType: 'depends_on', weight: 0.8 },
+    { sourceId: 'kafka', targetId: 'chunk-2', edgeType: 'depends_on', weight: 0.6 },
+    { sourceId: 'chunk-1', targetId: 'chunk-3', edgeType: 'related_to', weight: 0.5 },
+    { sourceId: 'chunk-2', targetId: 'chunk-4', edgeType: 'causes', weight: 0.9 },
+    { sourceId: 'chunk-3', targetId: 'chunk-5', edgeType: 'related_to', weight: 0.4 },
+    { sourceId: 'redis', targetId: 'chunk-6', edgeType: 'depends_on', weight: 0.7 },
+  ];
+
+  const config = {
+    decay: 0.7,
+    maxDepth: 3,
+    minActivation: 0.05,
+    maxResults: 10,
+    edgeMultipliers: { 'causes': 1.5, 'caused_by': 1.5, 'depends_on': 1.0, 'related_to': 0.8 },
+  };
+
+  const results = spreadingActivation(['kafka'], edges, config);
+  assert3(results.length > 0, `Returns results (got ${results.length})`);
+  assert3(results[0].activation > results[results.length - 1].activation, 'Sorted by activation descending');
+
+  // Chunks directly connected to kafka should have highest activation
+  const directChunks = results.filter(r => r.distance === 1);
+  assert3(directChunks.length >= 2, `Direct neighbors found (${directChunks.length})`);
+  assert3(directChunks[0].activation > 0.4, `Direct activation is high (${directChunks[0].activation.toFixed(3)})`);
+
+  // chunk-6 (connected to redis, not kafka) should NOT appear
+  const chunk6 = results.find(r => r.nodeId === 'chunk-6');
+  assert3(!chunk6, 'Unconnected nodes not reached');
+
+  // Causal edges should boost activation (chunk-4 via 'causes' edge)
+  const chunk4 = results.find(r => r.nodeId === 'chunk-4');
+  const chunk3 = results.find(r => r.nodeId === 'chunk-3');
+  if (chunk4 && chunk3) {
+    // chunk-4 goes through a causal edge (1.5x multiplier) vs chunk-3 through related_to (0.8x)
+    assert3(chunk4.activation > chunk3.activation, `Causal edge boosts activation (${chunk4.activation.toFixed(3)} > ${chunk3.activation.toFixed(3)})`);
+  }
+
+  // Multi-seed test
+  const multiResults = spreadingActivation(['kafka', 'redis'], edges, config);
+  assert3(multiResults.length > results.length, `Multi-seed finds more nodes (${multiResults.length} > ${results.length})`);
+}
+
+// ─── Compute Graph Activations ───────────────────────────────────────────────
+console.log('\nGraph Activations:');
+{
+  const activations = computeGraphActivations(
+    [1.0, 0.8, 0.5],    // seed activations
+    [1, 2, 1],           // distances
+    [0.9, 0.7, 0.6],    // edge weights
+    0.7,                  // decay
+  );
+  assert3(activations.length === 3, 'Returns 3 activations');
+  assert3(activations[0] > activations[1], 'Closer + stronger = higher activation');
+  assert3(activations[0] === 1.0 * 0.7 * 0.9, `Correct formula: ${activations[0]}`);
+}
+
+// ─── Score by Connectivity ───────────────────────────────────────────────────
+console.log('\nConnectivity Scoring:');
+{
+  const edges = [
+    { sourceId: 'kafka', targetId: 'chunk-1', edgeType: 'depends_on', weight: 0.8 },
+    { sourceId: 'redis', targetId: 'chunk-1', edgeType: 'depends_on', weight: 0.6 },
+    { sourceId: 'kafka', targetId: 'chunk-2', edgeType: 'depends_on', weight: 0.9 },
+    { sourceId: 'postgres', targetId: 'chunk-3', edgeType: 'depends_on', weight: 0.7 },
+  ];
+
+  const scores = scoreByConnectivity(
+    ['chunk-1', 'chunk-2', 'chunk-3', 'chunk-4'],
+    edges,
+    ['kafka', 'redis'],
+  );
+  assert3(scores.length === 4, 'Returns 4 scores');
+  assert3(scores[0] > scores[2], 'chunk-1 (connected to 2 seeds) scores higher than chunk-3 (0 seeds)');
+  assert3(scores[0] === 0.8 + 0.6, `chunk-1 score = kafka(0.8) + redis(0.6) = ${scores[0]}`);
+  assert3(scores[1] === 0.9, `chunk-2 score = kafka(0.9) = ${scores[1]}`);
+  assert3(scores[2] === 0.0, `chunk-3 not connected to seeds = ${scores[2]}`);
+  assert3(scores[3] === 0.0, `chunk-4 not in graph = ${scores[3]}`);
+}
+
+// ─── Performance ─────────────────────────────────────────────────────────────
+console.log('\nPerformance:');
+{
+  // Generate a large graph (1000 nodes, 5000 edges)
+  const edges = [];
+  for (let i = 0; i < 5000; i++) {
+    edges.push({
+      sourceId: `node-${i % 200}`,
+      targetId: `node-${(i * 7 + 13) % 1000}`,
+      edgeType: ['depends_on', 'related_to', 'causes', 'uses'][i % 4],
+      weight: 0.3 + Math.random() * 0.7,
+    });
+  }
+
+  const config = {
+    decay: 0.6,
+    maxDepth: 3,
+    minActivation: 0.01,
+    maxResults: 50,
+    edgeMultipliers: { 'causes': 1.5, 'depends_on': 1.0, 'related_to': 0.8, 'uses': 0.9 },
+  };
+
+  const start = performance.now();
+  const iterations = 100;
+  for (let i = 0; i < iterations; i++) {
+    spreadingActivation([`node-${i % 200}`], edges, config);
+  }
+  const elapsed = performance.now() - start;
+  const perCall = elapsed / iterations;
+  console.log(`  1000-node graph, 5000 edges × ${iterations} iterations: ${elapsed.toFixed(0)}ms`);
+  console.log(`  Per call: ${perCall.toFixed(2)}ms`);
+  assert3(perCall < 10, `Graph traversal < 10ms per call (got ${perCall.toFixed(2)}ms)`);
+}
+
+// ─── Final Summary ───────────────────────────────────────────────────────────
+console.log(`\n═══════════════════════════════════════════════════`);
+console.log(`Graph Traversal: ${graphPassed} passed, ${graphFailed} failed`);
+console.log(`\nGRAND TOTAL: ${passed + dedupPassed + graphPassed} passed, ${failed + dedupFailed + graphFailed} failed`);
+process.exit((failed + dedupFailed + graphFailed) > 0 ? 1 : 0);

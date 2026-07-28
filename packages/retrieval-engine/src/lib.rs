@@ -12,6 +12,7 @@
 //! - Batch vector operations — cosine similarity, validation, local embeddings
 
 mod dedup;
+mod graph;
 
 #[macro_use]
 extern crate napi_derive;
