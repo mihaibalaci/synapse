@@ -1,4 +1,4 @@
-# Synapse
+# <img src="docs/assets/logo.svg" width="36" height="36" align="top" /> Synapse
 
 **The memory layer that learns.**
 
