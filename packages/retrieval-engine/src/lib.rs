@@ -8,6 +8,10 @@
 //! - Token-budget packing — greedy pack results within a budget
 //! - Temporal scoring — exponential decay with recency boost
 //! - Diversity enforcement — penalize same-session clusters
+//! - MinHash deduplication — 128-hash fingerprinting with parallel comparison
+//! - Batch vector operations — cosine similarity, validation, local embeddings
+
+mod dedup;
 
 #[macro_use]
 extern crate napi_derive;

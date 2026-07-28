@@ -162,5 +162,206 @@ console.log('\nPerformance:');
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
 console.log(`\n═══════════════════════════════════════════════════`);
-console.log(`Results: ${passed} passed, ${failed} failed`);
-process.exit(failed > 0 ? 1 : 0);
+console.log(`Retrieval Engine: ${passed} passed, ${failed} failed`);
+// Don't exit here — dedup tests follow
+
+
+// ─── DEDUP + EMBEDDING PIPELINE TESTS ────────────────────────────────────────
+
+import {
+  computeMinhash,
+  batchComputeMinhash,
+  minhashJaccard,
+  batchMinhashJaccard,
+  scoreDedupCandidates,
+  titleJaccardSimilarity,
+  batchTitleSimilarity,
+  validateEmbedding,
+  batchValidateEmbeddings,
+  generateLocalEmbeddings,
+  fnv1AFingerprint,
+  batchFnv1AFingerprint,
+} from './index.js';
+
+console.log('\n═══════════════════════════════════════════════════');
+console.log('Dedup + Embedding Pipeline — Rust Native Tests');
+console.log('═══════════════════════════════════════════════════\n');
+
+let dedupPassed = 0;
+let dedupFailed = 0;
+
+function assert2(condition, msg) {
+  if (condition) { dedupPassed++; console.log(`  ✓ ${msg}`); }
+  else { dedupFailed++; console.error(`  ✗ ${msg}`); }
+}
+
+// ─── MinHash ─────────────────────────────────────────────────────────────────
+console.log('MinHash:');
+{
+  const sig = computeMinhash('Lambda timeout in VPC due to DNS resolution delay', 128, 3);
+  assert2(sig.length === 128, 'Produces 128-element signature');
+  assert2(sig.every(v => v >= 0), 'All values are non-negative u32');
+
+  // Same text should produce same signature
+  const sig2 = computeMinhash('Lambda timeout in VPC due to DNS resolution delay', 128, 3);
+  assert2(JSON.stringify(sig) === JSON.stringify(sig2), 'Deterministic: same text = same signature');
+
+  // Different text should produce different signature
+  const sigDiff = computeMinhash('React hooks and state management with Redux', 128, 3);
+  const jaccard = minhashJaccard(sig, sigDiff);
+  assert2(jaccard < 0.3, `Different topics have low Jaccard (${jaccard.toFixed(3)})`);
+
+  // Similar text should have higher Jaccard
+  const sigSimilar = computeMinhash('Lambda timeout in VPC caused by DNS lookup failure', 128, 3);
+  const jaccardSimilar = minhashJaccard(sig, sigSimilar);
+  assert2(jaccardSimilar > 0.3, `Similar texts have higher Jaccard (${jaccardSimilar.toFixed(3)})`);
+}
+
+// ─── Batch MinHash ───────────────────────────────────────────────────────────
+console.log('\nBatch MinHash:');
+{
+  const texts = [
+    'Deploy using Terraform with S3 backend',
+    'Deploy using Terraform with DynamoDB lock',
+    'React component lifecycle and hooks',
+  ];
+  const sigs = batchComputeMinhash(texts, 128, 3);
+  assert2(sigs.length === 3, 'Returns 3 signatures');
+  assert2(sigs[0].length === 128, 'Each signature has 128 elements');
+
+  const similarities = batchMinhashJaccard(sigs[0], [sigs[1], sigs[2]]);
+  assert2(similarities[0] > similarities[1], 'Terraform texts more similar to each other than to React');
+}
+
+// ─── Dedup Scoring ───────────────────────────────────────────────────────────
+console.log('\nDedup Scoring:');
+{
+  const candidates = [
+    { id: 'c1', embeddingSimilarity: 0.95, minhashSimilarity: 0.85, titleSimilarity: 0.90, repositoryOverlap: true },
+    { id: 'c2', embeddingSimilarity: 0.80, minhashSimilarity: 0.40, titleSimilarity: 0.30, repositoryOverlap: false },
+    { id: 'c3', embeddingSimilarity: 0.92, minhashSimilarity: 0.75, titleSimilarity: 0.80, repositoryOverlap: true },
+  ];
+  const weights = { embedding: 0.40, minhash: 0.30, title: 0.20, repository: 0.10 };
+
+  const results = scoreDedupCandidates(candidates, weights, 0.85);
+  assert2(results.length === 2, 'Filters to candidates above 0.85 threshold');
+  assert2(results[0].id === 'c1', 'Highest combined score first');
+  assert2(results[0].combinedScore > 0.85, `Score above threshold: ${results[0].combinedScore.toFixed(3)}`);
+}
+
+// ─── Title Similarity ────────────────────────────────────────────────────────
+console.log('\nTitle Similarity:');
+{
+  const sim = titleJaccardSimilarity(
+    'Fix Lambda timeout in VPC',
+    'Lambda VPC timeout fix',
+  );
+  assert2(sim > 0.5, `Same words reordered: ${sim.toFixed(3)}`);
+
+  const simDiff = titleJaccardSimilarity(
+    'Fix Lambda timeout in VPC',
+    'React hooks state management',
+  );
+  assert2(simDiff < 0.1, `Different topics: ${simDiff.toFixed(3)}`);
+
+  const batch = batchTitleSimilarity('Kafka event streaming', [
+    'Event streaming with Kafka',
+    'React component testing',
+    'Kafka producer configuration',
+  ]);
+  assert2(batch[0] > batch[1], 'Similar title ranks higher');
+  assert2(batch[2] > batch[1], 'Kafka-related title ranks higher than React');
+}
+
+// ─── Vector Validation ───────────────────────────────────────────────────────
+console.log('\nVector Validation:');
+{
+  const valid = validateEmbedding(Array(1536).fill(0.1), 1536);
+  assert2(valid === true, 'Valid 1536-dim vector passes');
+
+  const invalidDim = validateEmbedding(Array(768).fill(0.1), 1536);
+  assert2(invalidDim === false, 'Wrong dimension fails');
+
+  const invalidNaN = validateEmbedding([...Array(1535).fill(0.1), NaN], 1536);
+  assert2(invalidNaN === false, 'NaN value fails');
+
+  const invalidInf = validateEmbedding([...Array(1535).fill(0.1), Infinity], 1536);
+  assert2(invalidInf === false, 'Infinity value fails');
+
+  const invalids = batchValidateEmbeddings([
+    Array(1536).fill(0.1),       // valid
+    Array(768).fill(0.1),        // wrong dim
+    [...Array(1535).fill(0.1), NaN], // NaN
+    Array(1536).fill(0.2),       // valid
+  ], 1536);
+  assert2(invalids.length === 2, 'Batch finds 2 invalid embeddings');
+  assert2(invalids.includes(1) && invalids.includes(2), 'Identifies correct indices');
+}
+
+// ─── Local Embeddings ────────────────────────────────────────────────────────
+console.log('\nLocal Embeddings:');
+{
+  const embeddings = generateLocalEmbeddings(['Hello world', 'Test input'], 1536);
+  assert2(embeddings.length === 2, 'Generates 2 embeddings');
+  assert2(embeddings[0].length === 1536, 'Correct dimensions');
+
+  // Check normalization (L2 norm should be ~1.0)
+  const norm = Math.sqrt(embeddings[0].reduce((s, v) => s + v * v, 0));
+  assert2(Math.abs(norm - 1.0) < 0.001, `Normalized to unit length (norm=${norm.toFixed(4)})`);
+
+  // Different texts should produce different embeddings
+  const sim = embeddings[0].reduce((s, v, i) => s + v * embeddings[1][i], 0);
+  assert2(sim < 1.0, 'Different texts produce different embeddings');
+}
+
+// ─── Fingerprinting ──────────────────────────────────────────────────────────
+console.log('\nFingerprinting:');
+{
+  const fp = fnv1AFingerprint('Lambda timeout VPC');
+  assert2(fp > 0, `Produces non-zero fingerprint: ${fp}`);
+
+  const fp2 = fnv1AFingerprint('Lambda timeout VPC');
+  assert2(fp === fp2, 'Deterministic');
+
+  const fpDiff = fnv1AFingerprint('React hooks');
+  assert2(fp !== fpDiff, 'Different texts produce different fingerprints');
+
+  const batch = batchFnv1AFingerprint(['text1', 'text2', 'text3']);
+  assert2(batch.length === 3, 'Batch returns 3 fingerprints');
+  assert2(new Set(batch).size === 3, 'All unique');
+}
+
+// ─── Performance ─────────────────────────────────────────────────────────────
+console.log('\nPerformance:');
+{
+  // MinHash: 1000 texts
+  const texts = Array.from({ length: 1000 }, (_, i) =>
+    `This is test document number ${i} about ${['Kafka', 'Lambda', 'Docker', 'Redis', 'PostgreSQL'][i % 5]} with some extra content to make it realistic`
+  );
+
+  const start = performance.now();
+  const sigs = batchComputeMinhash(texts, 128, 3);
+  const minhashTime = performance.now() - start;
+  console.log(`  MinHash 1000 texts: ${minhashTime.toFixed(1)}ms`);
+  assert2(minhashTime < 500, `MinHash 1000 texts < 500ms (got ${minhashTime.toFixed(1)}ms)`);
+
+  // Batch Jaccard: compare 1 signature against 1000
+  const start2 = performance.now();
+  batchMinhashJaccard(sigs[0], sigs);
+  const jaccardTime = performance.now() - start2;
+  console.log(`  Jaccard 1 vs 1000: ${jaccardTime.toFixed(1)}ms`);
+  assert2(jaccardTime < 5, `Jaccard 1 vs 1000 < 5ms (got ${jaccardTime.toFixed(1)}ms)`);
+
+  // Local embeddings: 100 texts × 1536 dim
+  const start3 = performance.now();
+  generateLocalEmbeddings(texts.slice(0, 100), 1536);
+  const embedTime = performance.now() - start3;
+  console.log(`  Local embed 100 texts: ${embedTime.toFixed(1)}ms`);
+  assert2(embedTime < 100, `Local embed 100 × 1536 < 100ms (got ${embedTime.toFixed(1)}ms)`);
+}
+
+// ─── Summary ─────────────────────────────────────────────────────────────────
+console.log(`\n═══════════════════════════════════════════════════`);
+console.log(`Dedup Pipeline: ${dedupPassed} passed, ${dedupFailed} failed`);
+console.log(`Total: ${passed + dedupPassed} passed, ${failed + dedupFailed} failed`);
+process.exit((failed + dedupFailed) > 0 ? 1 : 0);
