@@ -75,6 +75,14 @@ func (wp *WorkerPool) Stop() {
 
 func (wp *WorkerPool) run(id int) {
 	defer wp.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Worker panicked, restarting", "id", id, "panic", r)
+			// Restart this worker
+			wp.wg.Add(1)
+			go wp.run(id)
+		}
+	}()
 	slog.Debug("Worker started", "id", id)
 
 	for {
@@ -92,6 +100,7 @@ func (wp *WorkerPool) run(id int) {
 
 			if err != nil {
 				slog.Warn("Dequeue error", "queue", queue, "error", err)
+				time.Sleep(500 * time.Millisecond) // Back off on errors
 				continue
 			}
 			if data == nil {
@@ -112,6 +121,13 @@ func (wp *WorkerPool) run(id int) {
 func (wp *WorkerPool) processJob(job Job) {
 	start := time.Now()
 	ctx := context.Background()
+
+	// Panic recovery per-job — one bad job doesn't crash the worker
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Job panicked", "type", job.Type, "id", job.SessionID+job.ChunkID, "panic", r)
+		}
+	}()
 
 	var err error
 	switch job.Type {

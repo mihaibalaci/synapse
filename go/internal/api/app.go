@@ -23,12 +23,12 @@ type App struct {
 
 // NewApp initializes all storage connections and repositories.
 func NewApp(ctx context.Context, cfg *config.Config) (*App, error) {
-	db, err := storage.Connect(ctx, cfg.DatabaseURL)
+	db, err := storage.ConnectWithRetry(ctx, cfg.DatabaseURL, storage.DefaultRetry)
 	if err != nil {
 		return nil, err
 	}
 
-	cache, err := storage.ConnectRedis(ctx, cfg.RedisURL)
+	cache, err := storage.ConnectRedisWithRetry(ctx, cfg.RedisURL, storage.DefaultRetry)
 	if err != nil {
 		db.Close()
 		return nil, err
