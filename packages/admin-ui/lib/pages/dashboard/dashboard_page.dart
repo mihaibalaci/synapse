@@ -119,6 +119,10 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 24),
 
+          // Trending Topics (Convergence Detection)
+          _buildTrendingPanel(),
+          const SizedBox(height: 24),
+
           // Data Sources
           _buildDataSourcesPanel(),
         ],
@@ -372,6 +376,77 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  Widget _buildTrendingPanel() {
+    final theme = Theme.of(context);
+
+    // Mock trending data (in production, fetched from /api/v1/stats/trending)
+    final trending = <Map<String, dynamic>>[];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.trending_up, size: 20, color: Colors.orange[300]),
+                    const SizedBox(width: 8),
+                    Text('Trending Topics', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text('${trending.length}', style: TextStyle(color: Colors.orange[300], fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Topics where 3+ engineers are converging (same question, same hour)',
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurface.withValues(alpha: 0.5)),
+            ),
+            const SizedBox(height: 16),
+            if (trending.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(Icons.explore_off, size: 32, color: theme.colorScheme.onSurface.withValues(alpha: 0.2)),
+                      const SizedBox(height: 8),
+                      Text(
+                        'No convergence detected right now',
+                        style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.4), fontSize: 13),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'When multiple engineers ask about the same topic, it will appear here',
+                        style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.3), fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              ...trending.map((t) => _TrendingTopicRow(topic: t)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildDataSourcesPanel() {
     final theme = Theme.of(context);
 
@@ -580,6 +655,56 @@ class _DataSourceCard extends StatelessWidget {
             ),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrendingTopicRow extends StatelessWidget {
+  final Map<String, dynamic> topic;
+  const _TrendingTopicRow({required this.topic});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.15)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(Icons.people, size: 14, color: Colors.orange[300]),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(topic['topic'] ?? '', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
+                Text('${topic['engineers'] ?? 0} engineers • ${topic['queries'] ?? 0} queries',
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.5))),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text('LIVE', style: TextStyle(fontSize: 10, color: Colors.orange[300], fontWeight: FontWeight.w700)),
           ),
         ],
       ),

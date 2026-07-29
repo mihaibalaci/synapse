@@ -81,6 +81,7 @@ func NewRouter(cfg *config.Config) http.Handler {
 		r.Get("/api/v1/stats", handleStats)
 		r.Get("/api/v1/stats/learning", handleLearningStats)
 		r.Post("/api/v1/stats/learning/trigger", handleLearningTrigger)
+		r.Get("/api/v1/stats/trending", handleTrending)
 
 		// Admin: Users & Roles
 		r.Get("/api/v1/admin/users", handleListUsers)
@@ -249,6 +250,15 @@ func handleLearningTrigger(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"triggered": true,
 		"result": map[string]int{"opinionsReinforced": 0, "observationsRefreshed": 0, "observationsDiscovered": 0},
+	})
+}
+
+func handleTrending(w http.ResponseWriter, r *http.Request) {
+	// Returns currently trending topics (convergence events)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"trending": []any{},
+		"count":    0,
+		"message":  "Trending topics appear when 3+ engineers ask about the same topic within 1 hour",
 	})
 }
 
