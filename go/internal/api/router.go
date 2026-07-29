@@ -82,6 +82,7 @@ func NewRouter(cfg *config.Config) http.Handler {
 		r.Get("/api/v1/stats/learning", handleLearningStats)
 		r.Post("/api/v1/stats/learning/trigger", handleLearningTrigger)
 		r.Get("/api/v1/stats/trending", handleTrending)
+		r.Get("/api/v1/stats/metrics", handleMetrics)
 
 		// Admin: Users & Roles
 		r.Get("/api/v1/admin/users", handleListUsers)
@@ -259,6 +260,49 @@ func handleTrending(w http.ResponseWriter, r *http.Request) {
 		"trending": []any{},
 		"count":    0,
 		"message":  "Trending topics appear when 3+ engineers ask about the same topic within 1 hour",
+	})
+}
+
+func handleMetrics(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"cache": map[string]any{
+			"hits":      metrics.cacheHits,
+			"misses":    metrics.cacheMisses,
+			"hitRate":   metrics.hitRate(),
+			"evictions": metrics.cacheEvictions,
+			"size":      metrics.cacheSize,
+		},
+		"retrieval": map[string]any{
+			"totalQueries":   metrics.totalQueries,
+			"avgLatencyMs":   metrics.avgLatencyMs,
+			"p95LatencyMs":   metrics.p95LatencyMs,
+			"concurrentNow":  metrics.concurrent,
+			"peakConcurrent": metrics.peakConcurrent,
+		},
+		"ingestion": map[string]any{
+			"sessionsProcessed":   metrics.sessionsProcessed,
+			"chunksCreated":       metrics.chunksCreated,
+			"factsExtracted":      metrics.factsExtracted,
+			"segmentations":       metrics.segmentations,
+			"embeddingsGenerated": metrics.embeddingsGenerated,
+			"deduplicationsRun":   metrics.deduplicationsRun,
+			"graphUpdates":        metrics.graphUpdates,
+			"searchIndexed":       metrics.searchIndexed,
+		},
+		"storage": map[string]any{
+			"pgActiveConns": metrics.pgConns,
+			"pgMaxConns":    20,
+			"redisConns":    metrics.redisConns,
+			"s3Puts":        metrics.s3Puts,
+			"s3Gets":        metrics.s3Gets,
+		},
+		"errors": map[string]any{
+			"total":     metrics.totalErrors,
+			"last5min":  metrics.recentErrors,
+			"retrieval": metrics.retrievalErrors,
+			"ingestion": metrics.ingestionErrors,
+			"storage":   metrics.storageErrors,
+		},
 	})
 }
 

@@ -70,13 +70,14 @@ class ApiService {
   Future<void> deleteUser(String id) => delete('/api/v1/admin/users/$id');
 
   Future<Map<String, dynamic>> getRoles() => get('/api/v1/admin/roles');
+
+  Future<Map<String, dynamic>> getMetrics() => get('/api/v1/stats/metrics');
 }
 
 class ApiException implements Exception {
   final int statusCode;
   final String body;
   ApiException(this.statusCode, this.body);
-
   @override
   String toString() => 'API Error $statusCode: $body';
 }
