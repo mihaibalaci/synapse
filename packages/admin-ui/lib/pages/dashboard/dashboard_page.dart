@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_service.dart';
+import '../../services/refresh_bus.dart';
 import '../../widgets/stat_card.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -17,6 +18,8 @@ class _DashboardPageState extends State<DashboardPage> {
   Map<String, dynamic>? _learning;
   String? _error;
   Timer? _timer;
+  RefreshBus? _bus;
+  int _lastTick = -1;
 
   @override
   void initState() {
@@ -26,30 +29,67 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bus = context.read<RefreshBus>();
+    if (_bus != bus) {
+      _bus?.removeListener(_onRefreshRequested);
+      _bus = bus;
+      _lastTick = bus.tick;
+      bus.addListener(_onRefreshRequested);
+    }
+  }
+
+  void _onRefreshRequested() {
+    final bus = _bus;
+    if (bus == null || bus.tick == _lastTick) return;
+    _lastTick = bus.tick;
+    _refresh();
+  }
+
+  @override
   void dispose() {
+    _bus?.removeListener(_onRefreshRequested);
     _timer?.cancel();
     super.dispose();
   }
 
   Future<void> _refresh() async {
     final api = context.read<ApiService>();
-    try {
-      final results = await Future.wait([
-        api.getStats().catchError((_) => <String, dynamic>{}),
-        api.getHealth().catchError((_) => <String, dynamic>{}),
-        api.getLearningMetrics().catchError((_) => <String, dynamic>{}),
-      ]);
-      if (mounted) {
-        setState(() {
-          _stats = results[0];
-          _health = results[1];
-          _learning = results[2];
-          _error = null;
-        });
+    _bus?.setBusy(true);
+    // Collect failures per-endpoint so a single failing call surfaces a real
+    // message instead of silently rendering zeros.
+    final errors = <String>[];
+
+    Future<Map<String, dynamic>> guard(
+      String name,
+      Future<Map<String, dynamic>> future,
+    ) async {
+      try {
+        return await future;
+      } catch (e) {
+        errors.add('$name: $e');
+        return <String, dynamic>{};
       }
-    } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
     }
+
+    final results = await Future.wait([
+      guard('stats', api.getStats()),
+      guard('health', api.getHealth()),
+      guard('learning', api.getLearningMetrics()),
+    ]);
+
+    if (!mounted) {
+      _bus?.setBusy(false);
+      return;
+    }
+    setState(() {
+      _stats = results[0];
+      _health = results[1];
+      _learning = results[2];
+      _error = errors.isEmpty ? null : errors.join('\n');
+    });
+    _bus?.setBusy(false);
   }
 
   @override

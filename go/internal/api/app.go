@@ -40,7 +40,7 @@ func NewApp(ctx context.Context, cfg *config.Config) (*App, error) {
 		envOr("AWS_SECRET_ACCESS_KEY", "minioadmin"),
 	)
 
-	return &App{
+	app := &App{
 		Config:   cfg,
 		DB:       db,
 		Cache:    cache,
@@ -49,7 +49,15 @@ func NewApp(ctx context.Context, cfg *config.Config) (*App, error) {
 		Chunks:   storage.NewChunkRepo(db),
 		Facts:    storage.NewFactRepo(db),
 		Stats:    storage.NewStatsRepo(db),
-	}, nil
+	}
+
+	// Seed cumulative ingestion metrics from the database so the Activity page
+	// reflects real historical work instead of zeros after a restart.
+	if counts, err := app.Stats.GetCounts(ctx, "default"); err == nil {
+		SeedFromCounts(counts)
+	}
+
+	return app, nil
 }
 
 // Close shuts down all connections.

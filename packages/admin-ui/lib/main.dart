@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'services/api_service.dart';
 import 'services/auth_service.dart';
+import 'services/refresh_bus.dart';
 import 'router.dart';
 
 void main() {
@@ -10,6 +11,7 @@ void main() {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
+        ChangeNotifierProvider(create: (_) => RefreshBus()),
         ProxyProvider<AuthService, ApiService>(
           update: (_, auth, __) => ApiService(auth: auth),
         ),

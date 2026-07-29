@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_service.dart';
+import '../../services/refresh_bus.dart';
 
 class SystemPage extends StatefulWidget {
   const SystemPage({super.key});
@@ -14,6 +15,8 @@ class _SystemPageState extends State<SystemPage> {
   Map<String, dynamic>? _health;
   Map<String, dynamic>? _stats;
   Timer? _timer;
+  RefreshBus? _bus;
+  int _lastTick = -1;
 
   @override
   void initState() {
@@ -23,7 +26,27 @@ class _SystemPageState extends State<SystemPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bus = context.read<RefreshBus>();
+    if (_bus != bus) {
+      _bus?.removeListener(_onRefreshRequested);
+      _bus = bus;
+      _lastTick = bus.tick;
+      bus.addListener(_onRefreshRequested);
+    }
+  }
+
+  void _onRefreshRequested() {
+    final bus = _bus;
+    if (bus == null || bus.tick == _lastTick) return;
+    _lastTick = bus.tick;
+    _refresh();
+  }
+
+  @override
   void dispose() {
+    _bus?.removeListener(_onRefreshRequested);
     _timer?.cancel();
     super.dispose();
   }

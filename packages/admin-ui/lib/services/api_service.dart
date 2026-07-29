@@ -4,10 +4,11 @@ import 'auth_service.dart';
 
 class ApiService {
   final AuthService auth;
-  // Default to localhost; override via environment or settings
+  // Use relative URL when served from the same origin (nginx proxies /api/ to Go)
+  // This ensures the JWT token is injected by nginx automatically
   static String baseUrl = const String.fromEnvironment(
     'API_URL',
-    defaultValue: 'http://172.16.10.85:3000',
+    defaultValue: '',  // Empty = same origin (relative URLs)
   );
 
   ApiService({required this.auth});

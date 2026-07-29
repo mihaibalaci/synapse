@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
+import '../services/refresh_bus.dart';
 
 class ShellScaffold extends StatelessWidget {
   final Widget child;
@@ -19,7 +21,65 @@ class ShellScaffold extends StatelessWidget {
           Expanded(
             child: Container(
               color: theme.colorScheme.surface,
-              child: child,
+              child: Column(
+                children: [
+                  const _TopBar(),
+                  Expanded(child: child),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Thin top bar holding the manual refresh control.
+class _TopBar extends StatelessWidget {
+  const _TopBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bus = context.watch<RefreshBus>();
+
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+          ),
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          if (bus.busy)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          Tooltip(
+            message: 'Refresh data',
+            child: IconButton(
+              icon: const Icon(Icons.refresh_rounded, size: 20),
+              onPressed: () {
+                context.read<RefreshBus>().request();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Refreshing…'),
+                    duration: Duration(milliseconds: 900),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              },
             ),
           ),
         ],

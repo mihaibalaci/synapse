@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,6 +14,8 @@ import (
 	"github.com/mihaibalaci/synapse/internal/auth"
 	"github.com/mihaibalaci/synapse/internal/config"
 	"github.com/mihaibalaci/synapse/internal/middleware"
+	"github.com/mihaibalaci/synapse/internal/models"
+	"github.com/mihaibalaci/synapse/internal/retrieval"
 )
 
 // appInstance holds the App reference for handlers that need DB access.
@@ -160,11 +163,53 @@ func handleCaptureEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"results": []any{}, "totalCount": 0, "query": "", "strategy": "hybrid",
-		"latencyMs": 0, "cached": false, "estimatedTokens": 0, "observations": []any{},
-	})
+	claims := auth.GetClaims(r)
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "AUTH_ERROR", "missing claims")
+		return
+	}
+
+	var req models.SearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		return
+	}
+	if req.Query == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "query is required")
+		return
+	}
+
+	// Track in-flight concurrency for the metrics panel.
+	n := atomic.AddInt64(&inFlightSearches, 1)
+	RecordConcurrent(n)
+	defer func() {
+		RecordConcurrent(atomic.AddInt64(&inFlightSearches, -1))
+	}()
+
+	start := time.Now()
+	engine := retrieval.NewEngine(
+		appInstance.DB, appInstance.Cache, appInstance.Chunks, appInstance.Facts,
+	)
+
+	resp, err := engine.Search(r.Context(), &req, claims)
+	if err != nil {
+		RecordError("retrieval")
+		writeError(w, http.StatusInternalServerError, "SEARCH_ERROR", err.Error())
+		return
+	}
+
+	RecordQuery(time.Since(start).Microseconds())
+	if resp.Cached {
+		RecordCacheHit()
+	} else {
+		RecordCacheMiss()
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
+
+// inFlightSearches counts concurrently executing search requests.
+var inFlightSearches int64
 
 func handleGetContext(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -314,6 +359,18 @@ func handleTrending(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMetrics(w http.ResponseWriter, r *http.Request) {
+	// Sample live pool utilisation at scrape time.
+	if appInstance != nil && appInstance.DB != nil {
+		stat := appInstance.DB.Pool.Stat()
+		SetPoolStats(
+			int64(stat.AcquiredConns()),
+			int64(stat.MaxConns()),
+			int64(stat.IdleConns()),
+		)
+	}
+
+	avgMs, p95Ms := latencyStats()
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"cache": map[string]any{
 			"hits":      metrics.cacheHits,
@@ -324,8 +381,8 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		},
 		"retrieval": map[string]any{
 			"totalQueries":   metrics.totalQueries,
-			"avgLatencyMs":   metrics.avgLatencyMs,
-			"p95LatencyMs":   metrics.p95LatencyMs,
+			"avgLatencyMs":   avgMs,
+			"p95LatencyMs":   p95Ms,
 			"concurrentNow":  metrics.concurrent,
 			"peakConcurrent": metrics.peakConcurrent,
 		},
@@ -341,7 +398,7 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		},
 		"storage": map[string]any{
 			"pgActiveConns": metrics.pgConns,
-			"pgMaxConns":    20,
+			"pgMaxConns":    metrics.pgMaxConns,
 			"redisConns":    metrics.redisConns,
 			"s3Puts":        metrics.s3Puts,
 			"s3Gets":        metrics.s3Gets,
@@ -384,6 +441,12 @@ func handleListRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// writeError emits a JSON error body matching the shape used by the auth
+// middleware, so clients can parse failures uniformly.
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]any{"error": code, "message": message})
+}
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")

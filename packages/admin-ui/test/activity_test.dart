@@ -18,7 +18,7 @@ void main() {
       await tester.pumpWidget(buildTestApp(const ActivityPage()));
       await tester.pump();
 
-      expect(find.text('Activity Log'), findsOneWidget);
+      expect(find.text('Activity & Metrics'), findsOneWidget);
     });
 
     testWidgets('shows live indicator', (tester) async {

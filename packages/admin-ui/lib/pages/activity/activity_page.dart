@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_service.dart';
+import '../../services/refresh_bus.dart';
 
 class ActivityPage extends StatefulWidget {
   const ActivityPage({super.key});
@@ -15,6 +16,9 @@ class _ActivityPageState extends State<ActivityPage> {
   Map<String, dynamic>? _metrics;
   Timer? _timer;
   bool _loading = true;
+  String? _error;
+  RefreshBus? _bus;
+  int _lastTick = -1;
 
   @override
   void initState() {
@@ -24,29 +28,72 @@ class _ActivityPageState extends State<ActivityPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bus = context.read<RefreshBus>();
+    if (_bus != bus) {
+      _bus?.removeListener(_onRefreshRequested);
+      _bus = bus;
+      _lastTick = bus.tick;
+      bus.addListener(_onRefreshRequested);
+    }
+  }
+
+  void _onRefreshRequested() {
+    final bus = _bus;
+    if (bus == null || bus.tick == _lastTick) return;
+    _lastTick = bus.tick;
+    _refresh();
+  }
+
+  @override
   void dispose() {
+    _bus?.removeListener(_onRefreshRequested);
     _timer?.cancel();
     super.dispose();
   }
 
+  /// Formats a latency value that may arrive as int or double.
+  static String _ms(dynamic value) {
+    final n = (value is num) ? value.toDouble() : 0.0;
+    if (n == 0) return '0ms';
+    if (n < 1) return '${(n * 1000).toStringAsFixed(0)}\u00B5s';
+    return '${n.toStringAsFixed(2)}ms';
+  }
+
   Future<void> _refresh() async {
     final api = context.read<ApiService>();
-    try {
-      final results = await Future.wait([
-        api.getStats().catchError((_) => <String, dynamic>{}),
-        api.getMetrics().catchError((_) => <String, dynamic>{}),
-      ]);
-      if (mounted) {
-        setState(() {
-          final stats = results[0];
-          _sessions = (stats['recentActivity'] as List?) ?? [];
-          _metrics = results[1];
-          _loading = false;
-        });
+    _bus?.setBusy(true);
+    final errors = <String>[];
+
+    Future<Map<String, dynamic>> guard(
+      String name,
+      Future<Map<String, dynamic>> future,
+    ) async {
+      try {
+        return await future;
+      } catch (e) {
+        errors.add('$name: $e');
+        return <String, dynamic>{};
       }
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
     }
+
+    final results = await Future.wait([
+      guard('stats', api.getStats()),
+      guard('metrics', api.getMetrics()),
+    ]);
+
+    if (!mounted) {
+      _bus?.setBusy(false);
+      return;
+    }
+    setState(() {
+      _sessions = (results[0]['recentActivity'] as List?) ?? [];
+      _metrics = results[1];
+      _error = errors.isEmpty ? null : errors.join('\n');
+      _loading = false;
+    });
+    _bus?.setBusy(false);
   }
 
   @override
@@ -84,6 +131,27 @@ class _ActivityPageState extends State<ActivityPage> {
             ],
           ),
           const SizedBox(height: 24),
+
+          if (_error != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: colorScheme.errorContainer,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _error!,
+                style: TextStyle(color: colorScheme.onErrorContainer, fontSize: 12),
+              ),
+            ),
+
+          if (_loading && _metrics == null)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 16),
+              child: LinearProgressIndicator(minHeight: 2),
+            ),
 
           // Cache metrics
           _buildCachePanel(),
@@ -186,8 +254,8 @@ class _ActivityPageState extends State<ActivityPage> {
             ),
             const SizedBox(height: 16),
             _MetricRow(label: 'Total Queries', value: '${retrieval['totalQueries'] ?? 0}'),
-            _MetricRow(label: 'Avg Latency', value: '${retrieval['avgLatencyMs'] ?? 0}ms'),
-            _MetricRow(label: 'p95 Latency', value: '${retrieval['p95LatencyMs'] ?? 0}ms'),
+            _MetricRow(label: 'Avg Latency', value: _ms(retrieval['avgLatencyMs'])),
+            _MetricRow(label: 'p95 Latency', value: _ms(retrieval['p95LatencyMs'])),
             _MetricRow(label: 'Concurrent Now', value: '${retrieval['concurrentNow'] ?? 0}', highlight: (retrieval['concurrentNow'] ?? 0) > 0),
             _MetricRow(label: 'Peak Concurrent', value: '${retrieval['peakConcurrent'] ?? 0}'),
           ],
