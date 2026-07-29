@@ -63,7 +63,16 @@ func main() {
 }
 
 func runServer(cfg *config.Config) {
-	router := api.NewRouter(cfg)
+	// Initialize app with storage connections
+	ctx := context.Background()
+	app, err := api.NewApp(ctx, cfg)
+	if err != nil {
+		slog.Error("Failed to initialize app", "error", err)
+		os.Exit(1)
+	}
+	defer app.Close()
+
+	router := api.NewRouter(cfg, app)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),

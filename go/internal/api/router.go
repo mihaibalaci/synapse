@@ -16,7 +16,7 @@ import (
 )
 
 // NewRouter creates the main HTTP router with all middleware and routes.
-func NewRouter(cfg *config.Config) http.Handler {
+func NewRouter(cfg *config.Config, app *App) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -47,8 +47,8 @@ func NewRouter(cfg *config.Config) http.Handler {
 		r.Use(rateLimiter.Middleware)
 
 		// Capture endpoints
-		r.Post("/api/v1/capture/passive", handleCapturePassive)
-		r.Post("/api/v1/capture/active", handleCaptureActive)
+		r.Post("/api/v1/capture/passive", CapturePassiveHandler(app))
+		r.Post("/api/v1/capture/active", CaptureActiveHandler(app))
 		r.Post("/api/v1/capture/event", handleCaptureEvent)
 		r.Post("/api/v1/capture/events", handleCaptureEvents)
 
