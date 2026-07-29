@@ -42,6 +42,8 @@ type Config struct {
 	// Rate Limiting
 	RateLimitMax    int
 	RateLimitWindow int // seconds
+	// Ingestion
+	WorkerConcurrency int
 }
 
 func Load() *Config {
@@ -73,6 +75,8 @@ func Load() *Config {
 
 		RateLimitMax:    envInt("RATE_LIMIT_MAX", 100),
 		RateLimitWindow: envInt("RATE_LIMIT_WINDOW_MS", 60000) / 1000,
+
+		WorkerConcurrency: envInt("WORKER_CONCURRENCY", 4),
 	}
 }
 

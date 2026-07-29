@@ -4,6 +4,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -66,6 +68,7 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 
 		// Facts endpoints
 		r.Get("/api/v1/facts", handleGetFacts)
+		r.Post("/api/v1/facts", handleCreateFact)
 		r.Get("/api/v1/facts/{entity}/history", handleGetFactHistory)
 
 		// Reflect endpoint (learning loop)
@@ -189,6 +192,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	engine := retrieval.NewEngine(
 		appInstance.DB, appInstance.Cache, appInstance.Chunks, appInstance.Facts,
+		appInstance.Embedder,
 	)
 
 	resp, err := engine.Search(r.Context(), &req, claims)
@@ -211,9 +215,64 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 // inFlightSearches counts concurrently executing search requests.
 var inFlightSearches int64
 
+// handleGetContext runs retrieval with a token budget, returning content
+// suitable for injecting directly into an AI prompt.
 func handleGetContext(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r)
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "AUTH_ERROR", "missing claims")
+		return
+	}
+
+	var req models.SearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		return
+	}
+	if req.Query == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "query is required")
+		return
+	}
+	if req.MaxTokens == 0 {
+		req.MaxTokens = 3000
+	}
+	if req.TopK == 0 {
+		req.TopK = 10
+	}
+	req.IncludeContent = true
+
+	n := atomic.AddInt64(&inFlightSearches, 1)
+	RecordConcurrent(n)
+	defer func() { RecordConcurrent(atomic.AddInt64(&inFlightSearches, -1)) }()
+
+	start := time.Now()
+	engine := retrieval.NewEngine(
+		appInstance.DB, appInstance.Cache, appInstance.Chunks, appInstance.Facts,
+		appInstance.Embedder,
+	)
+
+	resp, err := engine.Search(r.Context(), &req, claims)
+	if err != nil {
+		RecordError("retrieval")
+		writeError(w, http.StatusInternalServerError, "CONTEXT_ERROR", err.Error())
+		return
+	}
+
+	RecordQuery(time.Since(start).Microseconds())
+	if resp.Cached {
+		RecordCacheHit()
+	} else {
+		RecordCacheMiss()
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"context": []any{}, "totalResults": 0, "returnedResults": 0, "estimatedTokens": 0,
+		"context":         resp.Results,
+		"totalResults":    resp.TotalCount,
+		"returnedResults": len(resp.Results),
+		"estimatedTokens": resp.EstimatedTokens,
+		"maxTokens":       req.MaxTokens,
+		"latencyMs":       resp.LatencyMs,
+		"cached":          resp.Cached,
 	})
 }
 
@@ -221,13 +280,162 @@ func handleSimilar(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"results": []any{}})
 }
 
+// handleGetFacts returns atomic facts matching the requested entities.
+// Query params: entities (comma separated), types (comma separated), limit.
 func handleGetFacts(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"facts": []any{}, "total": 0})
+	claims := auth.GetClaims(r)
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "AUTH_ERROR", "missing claims")
+		return
+	}
+
+	entities := splitCSV(r.URL.Query().Get("entities"))
+	limit := queryInt(r, "limit", 10)
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	// FindByEntities uses an array-overlap predicate, so an empty entity list
+	// would never match. Fall back to the most recent facts in that case.
+	var (
+		facts []models.Fact
+		err   error
+	)
+	if len(entities) == 0 {
+		facts, err = appInstance.Facts.FindRecent(r.Context(), claims.OrganizationID, limit)
+	} else {
+		facts, err = appInstance.Facts.FindByEntities(r.Context(), entities, claims.OrganizationID, limit)
+	}
+	if err != nil {
+		RecordError("storage")
+		writeError(w, http.StatusInternalServerError, "QUERY_ERROR", err.Error())
+		return
+	}
+
+	// Optional filter by fact type.
+	if types := splitCSV(r.URL.Query().Get("types")); len(types) > 0 {
+		allowed := make(map[string]bool, len(types))
+		for _, t := range types {
+			allowed[t] = true
+		}
+		filtered := facts[:0]
+		for _, f := range facts {
+			if allowed[f.Type] {
+				filtered = append(filtered, f)
+			}
+		}
+		facts = filtered
+	}
+
+	if facts == nil {
+		facts = []models.Fact{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"facts": facts, "total": len(facts)})
 }
 
+// handleGetFactHistory returns the temporal chain for an entity, including
+// superseded facts, so callers can see how a decision evolved.
 func handleGetFactHistory(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r)
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "AUTH_ERROR", "missing claims")
+		return
+	}
+
 	entity := chi.URLParam(r, "entity")
-	writeJSON(w, http.StatusOK, map[string]any{"entity": entity, "history": []any{}})
+	if entity == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "entity is required")
+		return
+	}
+
+	limit := queryInt(r, "limit", 50)
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+
+	history, err := appInstance.Facts.GetHistory(r.Context(), entity, claims.OrganizationID, limit)
+	if err != nil {
+		RecordError("storage")
+		writeError(w, http.StatusInternalServerError, "QUERY_ERROR", err.Error())
+		return
+	}
+	if history == nil {
+		history = []models.Fact{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"entity":  entity,
+		"history": history,
+		"total":   len(history),
+	})
+}
+
+// handleCreateFact stores a single atomic insight supplied by a developer or
+// an AI agent via the MCP save_insight tool.
+func handleCreateFact(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r)
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "AUTH_ERROR", "missing claims")
+		return
+	}
+
+	var req struct {
+		Content    string   `json:"content"`
+		Type       string   `json:"type"`
+		Entities   []string `json:"entities"`
+		Repository string   `json:"repository"`
+		Confidence float64  `json:"confidence"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		return
+	}
+	if req.Content == "" || req.Type == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "content and type are required")
+		return
+	}
+	if !validFactTypes[req.Type] {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"type must be one of: decision, lesson, pattern, constraint, opinion")
+		return
+	}
+	if req.Confidence <= 0 || req.Confidence > 1 {
+		req.Confidence = 0.9 // human/agent-asserted insights start high
+	}
+	if req.Entities == nil {
+		req.Entities = []string{}
+	}
+
+	now := time.Now()
+	fact := &models.Fact{
+		Content:        req.Content,
+		Type:           req.Type,
+		Entities:       req.Entities,
+		Confidence:     req.Confidence,
+		ValidFrom:      &now,
+		ExtractedFrom:  "explicit",
+		AuthorID:       claims.UserID,
+		OrganizationID: claims.OrganizationID,
+		Scope:          "organization",
+		Repository:     req.Repository,
+		// memory_facts.frameworks is NOT NULL, so send an empty array
+		// rather than a nil slice.
+		Frameworks: []string{},
+	}
+
+	if err := appInstance.Facts.Create(r.Context(), fact); err != nil {
+		RecordError("storage")
+		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
+		return
+	}
+	RecordFactExtracted()
+
+	writeJSON(w, http.StatusCreated, map[string]any{"saved": true, "fact": fact})
+}
+
+var validFactTypes = map[string]bool{
+	"decision": true, "lesson": true, "pattern": true,
+	"constraint": true, "opinion": true,
 }
 
 func handleReflect(w http.ResponseWriter, r *http.Request) {
@@ -441,6 +649,35 @@ func handleListRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// splitCSV parses a comma-separated query parameter, trimming blanks.
+func splitCSV(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// queryInt reads an integer query parameter, falling back on absence or a
+// malformed value.
+func queryInt(r *http.Request, key string, fallback int) int {
+	raw := r.URL.Query().Get(key)
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return v
+}
 
 // writeError emits a JSON error body matching the shape used by the auth
 // middleware, so clients can parse failures uniformly.

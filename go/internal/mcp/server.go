@@ -15,12 +15,18 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // ─── JSON-RPC Types ──────────────────────────────────────────────────────────
@@ -78,9 +84,9 @@ var tools = []ToolDef{
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query":     map[string]string{"type": "string", "description": "What you need context about"},
+				"query":      map[string]string{"type": "string", "description": "What you need context about"},
 				"repository": map[string]string{"type": "string", "description": "Current repository"},
-				"maxTokens": map[string]any{"type": "number", "description": "Token budget", "default": 3000},
+				"maxTokens":  map[string]any{"type": "number", "description": "Token budget", "default": 3000},
 			},
 			"required": []string{"query"},
 		},
@@ -155,6 +161,7 @@ var tools = []ToolDef{
 type Server struct {
 	apiURL string
 	token  string
+	client *http.Client
 	reader *bufio.Reader
 	writer io.Writer
 }
@@ -162,8 +169,9 @@ type Server struct {
 // Run starts the MCP server, reading from stdin and writing to stdout.
 func Run(apiURL, token string) {
 	s := &Server{
-		apiURL: apiURL,
+		apiURL: strings.TrimRight(apiURL, "/"),
 		token:  token,
+		client: &http.Client{Timeout: 30 * time.Second},
 		reader: bufio.NewReader(os.Stdin),
 		writer: os.Stdout,
 	}
@@ -220,61 +228,471 @@ func (s *Server) handleRequest(req *Request) {
 }
 
 func (s *Server) callTool(name string, args map[string]any) map[string]any {
-	// In production, these would call the API. For now, return stubs.
-	ctx := context.Background()
-	_ = ctx
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	switch name {
 	case "search_knowledge":
-		return map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": fmt.Sprintf("Searching for: %v", args["query"])},
-			},
-		}
+		return s.toolSearch(ctx, args)
 	case "get_context":
-		return map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": "No context found yet. The system is ready to capture knowledge."},
-			},
-		}
+		return s.toolContext(ctx, args)
 	case "get_facts":
-		return map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": "No facts found matching the query."},
-			},
-		}
+		return s.toolFacts(ctx, args)
 	case "get_fact_history":
-		return map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": fmt.Sprintf("No history for entity: %v", args["entity"])},
-			},
-		}
+		return s.toolFactHistory(ctx, args)
 	case "reflect_on_knowledge":
-		return map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": "Reflect: not enough memories to synthesize an answer yet."},
-			},
-		}
+		return s.toolReflect(ctx, args)
 	case "save_session":
-		return map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": "Session saved to knowledge base."},
-			},
-		}
+		return s.toolSaveSession(ctx, args)
 	case "save_insight":
-		return map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": fmt.Sprintf("Insight saved: %v", args["content"])},
-			},
-		}
+		return s.toolSaveInsight(ctx, args)
 	default:
-		return map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": fmt.Sprintf("Unknown tool: %s", name)},
-			},
-			"isError": true,
+		return errorResult(fmt.Sprintf("Unknown tool: %s", name))
+	}
+}
+
+// ─── Tool implementations ────────────────────────────────────────────────────
+
+func (s *Server) toolSearch(ctx context.Context, args map[string]any) map[string]any {
+	query := argString(args, "query")
+	if query == "" {
+		return errorResult("query is required")
+	}
+
+	body := map[string]any{
+		"query":          query,
+		"topK":           argInt(args, "maxResults", 5),
+		"includeContent": true,
+	}
+	if repo := argString(args, "repository"); repo != "" {
+		body["context"] = map[string]any{"repository": repo}
+	}
+
+	var resp struct {
+		Results []struct {
+			Title      string  `json:"title"`
+			Summary    string  `json:"summary"`
+			Content    string  `json:"content"`
+			FinalScore float64 `json:"finalScore"`
+			Repository string  `json:"repository"`
+			CreatedAt  string  `json:"createdAt"`
+		} `json:"results"`
+		TotalCount      int   `json:"totalCount"`
+		EstimatedTokens int   `json:"estimatedTokens"`
+		LatencyMs       int64 `json:"latencyMs"`
+		Cached          bool  `json:"cached"`
+	}
+	if err := s.apiCall(ctx, http.MethodPost, "/api/v1/search", body, &resp); err != nil {
+		return errorResult(fmt.Sprintf("Search failed: %v", err))
+	}
+
+	if len(resp.Results) == 0 {
+		return textResult(fmt.Sprintf("No prior knowledge found for %q.", query))
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Found %d relevant memories for %q (%dms%s):\n\n",
+		resp.TotalCount, query, resp.LatencyMs, cachedSuffix(resp.Cached))
+	for i, r := range resp.Results {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, firstNonEmpty(r.Title, "(untitled)"))
+		if r.Repository != "" {
+			fmt.Fprintf(&b, "   repo: %s\n", r.Repository)
+		}
+		if r.Summary != "" {
+			fmt.Fprintf(&b, "   %s\n", truncate(r.Summary, 300))
+		}
+		if r.Content != "" {
+			fmt.Fprintf(&b, "   %s\n", truncate(r.Content, 600))
+		}
+		fmt.Fprintf(&b, "   relevance: %.3f | %s\n\n", r.FinalScore, r.CreatedAt)
+	}
+	return textResult(b.String())
+}
+
+func (s *Server) toolContext(ctx context.Context, args map[string]any) map[string]any {
+	query := argString(args, "query")
+	if query == "" {
+		return errorResult("query is required")
+	}
+
+	body := map[string]any{
+		"query":     query,
+		"maxTokens": argInt(args, "maxTokens", 3000),
+	}
+	if repo := argString(args, "repository"); repo != "" {
+		body["context"] = map[string]any{"repository": repo}
+	}
+
+	var resp struct {
+		Context []struct {
+			Title      string `json:"title"`
+			Summary    string `json:"summary"`
+			Content    string `json:"content"`
+			Repository string `json:"repository"`
+			CreatedAt  string `json:"createdAt"`
+		} `json:"context"`
+		ReturnedResults int  `json:"returnedResults"`
+		EstimatedTokens int  `json:"estimatedTokens"`
+		MaxTokens       int  `json:"maxTokens"`
+		Cached          bool `json:"cached"`
+	}
+	if err := s.apiCall(ctx, http.MethodPost, "/api/v1/context", body, &resp); err != nil {
+		return errorResult(fmt.Sprintf("Context retrieval failed: %v", err))
+	}
+
+	if len(resp.Context) == 0 {
+		return textResult(fmt.Sprintf("No organizational context available for %q.", query))
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Organizational context for %q (%d items, ~%d/%d tokens%s):\n\n",
+		query, resp.ReturnedResults, resp.EstimatedTokens, resp.MaxTokens, cachedSuffix(resp.Cached))
+	for i, c := range resp.Context {
+		fmt.Fprintf(&b, "--- %d. %s", i+1, firstNonEmpty(c.Title, "(untitled)"))
+		if c.Repository != "" {
+			fmt.Fprintf(&b, " [%s]", c.Repository)
+		}
+		fmt.Fprintf(&b, " ---\n%s\n\n", firstNonEmpty(c.Content, c.Summary))
+	}
+	return textResult(b.String())
+}
+
+func (s *Server) toolFacts(ctx context.Context, args map[string]any) map[string]any {
+	params := url.Values{}
+	if entities := argStringSlice(args, "entities"); len(entities) > 0 {
+		params.Set("entities", strings.Join(entities, ","))
+	}
+	if types := argStringSlice(args, "types"); len(types) > 0 {
+		params.Set("types", strings.Join(types, ","))
+	}
+	params.Set("limit", strconv.Itoa(argInt(args, "limit", 10)))
+
+	var resp struct {
+		Facts []factView `json:"facts"`
+		Total int        `json:"total"`
+	}
+	if err := s.apiCall(ctx, http.MethodGet, "/api/v1/facts?"+params.Encode(), nil, &resp); err != nil {
+		return errorResult(fmt.Sprintf("Fact query failed: %v", err))
+	}
+
+	if len(resp.Facts) == 0 {
+		return textResult("No facts recorded yet for that query.")
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d known facts:\n\n", resp.Total)
+	for _, f := range resp.Facts {
+		fmt.Fprintf(&b, "- [%s] %s\n", f.Type, f.Content)
+		if len(f.Entities) > 0 {
+			fmt.Fprintf(&b, "  entities: %s\n", strings.Join(f.Entities, ", "))
+		}
+		fmt.Fprintf(&b, "  confidence: %.2f | used %d times\n", f.Confidence, f.UsageCount)
+	}
+	return textResult(b.String())
+}
+
+func (s *Server) toolFactHistory(ctx context.Context, args map[string]any) map[string]any {
+	entity := argString(args, "entity")
+	if entity == "" {
+		return errorResult("entity is required")
+	}
+
+	var resp struct {
+		Entity  string     `json:"entity"`
+		History []factView `json:"history"`
+		Total   int        `json:"total"`
+	}
+	path := "/api/v1/facts/" + url.PathEscape(entity) + "/history"
+	if err := s.apiCall(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return errorResult(fmt.Sprintf("History query failed: %v", err))
+	}
+
+	if len(resp.History) == 0 {
+		return textResult(fmt.Sprintf("No recorded history for %q.", entity))
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "How knowledge about %q evolved (%d entries, oldest first):\n\n", entity, resp.Total)
+	for i, f := range resp.History {
+		state := "current"
+		if f.ValidUntil != nil {
+			state = "superseded"
+		}
+		fmt.Fprintf(&b, "%d. [%s | %s] %s\n", i+1, f.Type, state, f.Content)
+		if f.ValidFrom != nil {
+			fmt.Fprintf(&b, "   from: %s\n", *f.ValidFrom)
+		}
+		if f.ValidUntil != nil {
+			fmt.Fprintf(&b, "   until: %s\n", *f.ValidUntil)
 		}
 	}
+	return textResult(b.String())
+}
+
+// toolReflect asks the API to synthesise an answer. The server-side reflect
+// endpoint needs an LLM and is not implemented yet, so rather than fabricate a
+// synthesis this falls back to the raw supporting memories and says plainly
+// that no synthesis happened.
+func (s *Server) toolReflect(ctx context.Context, args map[string]any) map[string]any {
+	query := argString(args, "query")
+	if query == "" {
+		return errorResult("query is required")
+	}
+
+	body := map[string]any{"query": query, "maxTokens": argInt(args, "maxTokens", 6000)}
+	if focus := argString(args, "entityFocus"); focus != "" {
+		body["entityFocus"] = focus
+	}
+
+	var resp struct {
+		Answer     string `json:"answer"`
+		Confidence string `json:"confidence"`
+		Reasoning  string `json:"reasoning"`
+		Sources    []struct {
+			Title string `json:"title"`
+		} `json:"sources"`
+	}
+	if err := s.apiCall(ctx, http.MethodPost, "/api/v1/reflect", body, &resp); err != nil {
+		return errorResult(fmt.Sprintf("Reflect failed: %v", err))
+	}
+
+	if resp.Answer == "" || strings.Contains(strings.ToLower(resp.Answer), "not yet implemented") {
+		note := "Reflect synthesis is not available on this server yet (it requires an LLM). " +
+			"Returning the raw supporting memories instead:\n\n"
+		fallback := s.toolSearch(ctx, map[string]any{"query": query, "maxResults": 8})
+		if items, ok := fallback["content"].([]map[string]any); ok && len(items) > 0 {
+			if existing, ok := items[0]["text"].(string); ok {
+				return textResult(note + existing)
+			}
+		}
+		return textResult(note + "No supporting memories found.")
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\nconfidence: %s\n", resp.Answer, resp.Confidence)
+	if resp.Reasoning != "" {
+		fmt.Fprintf(&b, "reasoning: %s\n", resp.Reasoning)
+	}
+	for _, src := range resp.Sources {
+		fmt.Fprintf(&b, "- source: %s\n", src.Title)
+	}
+	return textResult(b.String())
+}
+
+func (s *Server) toolSaveSession(ctx context.Context, args map[string]any) map[string]any {
+	rawMessages, ok := args["messages"].([]any)
+	if !ok || len(rawMessages) < 2 {
+		return errorResult("messages must be an array of at least 2 {role, content} objects")
+	}
+
+	messages := make([]map[string]string, 0, len(rawMessages))
+	for _, rm := range rawMessages {
+		m, ok := rm.(map[string]any)
+		if !ok {
+			continue
+		}
+		role := argString(m, "role")
+		content := argString(m, "content")
+		if role == "" || content == "" {
+			continue
+		}
+		messages = append(messages, map[string]string{"role": role, "content": content})
+	}
+	if len(messages) < 2 {
+		return errorResult("at least 2 messages with non-empty role and content are required")
+	}
+
+	body := map[string]any{
+		"messages":   messages,
+		"source":     "mcp",
+		"repository": argString(args, "repository"),
+	}
+	if tags := argStringSlice(args, "tags"); len(tags) > 0 {
+		body["tags"] = tags
+	}
+
+	var resp struct {
+		SessionID string `json:"sessionId"`
+		Status    string `json:"status"`
+		Message   string `json:"message"`
+	}
+	if err := s.apiCall(ctx, http.MethodPost, "/api/v1/capture/active", body, &resp); err != nil {
+		return errorResult(fmt.Sprintf("Save failed: %v", err))
+	}
+
+	return textResult(fmt.Sprintf(
+		"Session saved to the knowledge base (%d messages).\nsessionId: %s\nstatus: %s",
+		len(messages), resp.SessionID, firstNonEmpty(resp.Status, "captured")))
+}
+
+func (s *Server) toolSaveInsight(ctx context.Context, args map[string]any) map[string]any {
+	content := argString(args, "content")
+	factType := argString(args, "type")
+	if content == "" || factType == "" {
+		return errorResult("content and type are required")
+	}
+
+	body := map[string]any{
+		"content":  content,
+		"type":     factType,
+		"entities": argStringSlice(args, "entities"),
+	}
+	if repo := argString(args, "repository"); repo != "" {
+		body["repository"] = repo
+	}
+
+	var resp struct {
+		Saved bool     `json:"saved"`
+		Fact  factView `json:"fact"`
+	}
+	if err := s.apiCall(ctx, http.MethodPost, "/api/v1/facts", body, &resp); err != nil {
+		return errorResult(fmt.Sprintf("Save failed: %v", err))
+	}
+
+	return textResult(fmt.Sprintf("Insight saved as a %q fact.\nid: %s\ncontent: %s",
+		factType, resp.Fact.ID, content))
+}
+
+// ─── HTTP plumbing ───────────────────────────────────────────────────────────
+
+// factView mirrors the API's fact JSON for the fields the tools render.
+type factView struct {
+	ID         string   `json:"id"`
+	Content    string   `json:"content"`
+	Type       string   `json:"type"`
+	Entities   []string `json:"entities"`
+	Confidence float64  `json:"confidence"`
+	UsageCount int      `json:"usageCount"`
+	ValidFrom  *string  `json:"validFrom,omitempty"`
+	ValidUntil *string  `json:"validUntil,omitempty"`
+}
+
+// apiCall performs an authenticated request against the Synapse API and decodes
+// the JSON response into out, which may be nil.
+func (s *Server) apiCall(ctx context.Context, method, path string, body any, out any) error {
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("encode request: %w", err)
+		}
+		reader = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, s.apiURL+path, reader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if s.token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.token)
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request to %s: %w", s.apiURL+path, err)
+	}
+	defer resp.Body.Close()
+
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("API returned %d: %s", resp.StatusCode, truncate(string(payload), 300))
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(payload, out); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
+
+// ─── Result and argument helpers ─────────────────────────────────────────────
+
+func textResult(text string) map[string]any {
+	return map[string]any{
+		"content": []map[string]any{{"type": "text", "text": text}},
+	}
+}
+
+func errorResult(text string) map[string]any {
+	return map[string]any{
+		"content": []map[string]any{{"type": "text", "text": text}},
+		"isError": true,
+	}
+}
+
+func argString(args map[string]any, key string) string {
+	if v, ok := args[key].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+// argInt reads a numeric argument. JSON numbers decode as float64, but the
+// other plausible shapes are accepted so a client sending an int or a string
+// still works.
+func argInt(args map[string]any, key string, fallback int) int {
+	switch v := args[key].(type) {
+	case float64:
+		if v > 0 {
+			return int(v)
+		}
+	case int:
+		if v > 0 {
+			return v
+		}
+	case string:
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
+}
+
+func argStringSlice(args map[string]any, key string) []string {
+	raw, ok := args[key].([]any)
+	if !ok {
+		if single := argString(args, key); single != "" {
+			return []string{single}
+		}
+		return []string{}
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, strings.TrimSpace(s))
+		}
+	}
+	return out
+}
+
+func truncate(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func cachedSuffix(cached bool) string {
+	if cached {
+		return ", cached"
+	}
+	return ""
 }
 
 func (s *Server) sendResult(id any, result any) {

@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"os"
 
 	"github.com/mihaibalaci/synapse/internal/config"
+	"github.com/mihaibalaci/synapse/internal/ingestion"
 	"github.com/mihaibalaci/synapse/internal/storage"
 )
 
@@ -19,6 +21,9 @@ type App struct {
 	Chunks   *storage.ChunkRepo
 	Facts    *storage.FactRepo
 	Stats    *storage.StatsRepo
+
+	// Embedder generates vectors for chunk content and search queries.
+	Embedder *ingestion.EmbeddingClient
 }
 
 // NewApp initializes all storage connections and repositories.
@@ -49,6 +54,18 @@ func NewApp(ctx context.Context, cfg *config.Config) (*App, error) {
 		Chunks:   storage.NewChunkRepo(db),
 		Facts:    storage.NewFactRepo(db),
 		Stats:    storage.NewStatsRepo(db),
+		Embedder: ingestion.NewEmbeddingClient(),
+	}
+
+	slog.Info("Embedding provider configured",
+		"provider", cfg.EmbeddingProvider,
+		"model", cfg.EmbeddingModel,
+		"dimensions", cfg.EmbeddingDimensions)
+
+	// Make sure the raw-session bucket exists. Captures are rejected when the
+	// raw write fails, so a missing bucket would take down ingestion entirely.
+	if err := objects.EnsureBucket(ctx); err != nil {
+		slog.Warn("Could not verify object storage bucket", "bucket", cfg.S3Bucket, "error", err)
 	}
 
 	// Seed cumulative ingestion metrics from the database so the Activity page

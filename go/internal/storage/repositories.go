@@ -74,7 +74,8 @@ func NewChunkRepo(db *DB) *ChunkRepo { return &ChunkRepo{db: db} }
 func (r *ChunkRepo) SearchByVector(ctx context.Context, embedding []float64, orgID string, limit int) ([]models.ChunkResult, error) {
 	// pgvector ANN search
 	rows, err := r.db.Query(ctx, `
-		SELECT id, title, summary, content, token_count, type, repository, language,
+		SELECT id, title, summary, content, token_count, type,
+			COALESCE(repository, '') AS repository, language,
 			quality_score, usage_count, confidence, created_at,
 			1 - (embedding <=> $1::vector) AS similarity
 		FROM chunks
@@ -92,17 +93,25 @@ func (r *ChunkRepo) SearchByVector(ctx context.Context, embedding []float64, org
 	var results []models.ChunkResult
 	for rows.Next() {
 		var c models.ChunkResult
-		rows.Scan(&c.ID, &c.Title, &c.Summary, &c.Content, &c.TokenCount, &c.Type,
+		// The scan error must be checked: pgx assigns fields left to right and
+		// stops at the first failure, so a single unexpected NULL silently
+		// leaves the trailing fields (quality_score, usage_count, confidence,
+		// created_at, similarity) at their zero values. That produced rankings
+		// computed from all-zero scores and 0001-01-01 timestamps.
+		if err := rows.Scan(&c.ID, &c.Title, &c.Summary, &c.Content, &c.TokenCount, &c.Type,
 			&c.Repository, &c.Language, &c.QualityScore, &c.UsageCount, &c.Confidence,
-			&c.CreatedAt, &c.Similarity)
+			&c.CreatedAt, &c.Similarity); err != nil {
+			return nil, fmt.Errorf("scan chunk row: %w", err)
+		}
 		results = append(results, c)
 	}
-	return results, nil
+	return results, rows.Err()
 }
 
 func (r *ChunkRepo) SearchByKeyword(ctx context.Context, query, orgID string, limit int) ([]models.ChunkResult, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, title, summary, content, token_count, type, repository, language,
+		SELECT id, title, summary, content, token_count, type,
+			COALESCE(repository, '') AS repository, language,
 			quality_score, usage_count, confidence, created_at,
 			ts_rank(search_vector, plainto_tsquery('english', $1)) AS similarity
 		FROM chunks
@@ -119,12 +128,19 @@ func (r *ChunkRepo) SearchByKeyword(ctx context.Context, query, orgID string, li
 	var results []models.ChunkResult
 	for rows.Next() {
 		var c models.ChunkResult
-		rows.Scan(&c.ID, &c.Title, &c.Summary, &c.Content, &c.TokenCount, &c.Type,
+		// The scan error must be checked: pgx assigns fields left to right and
+		// stops at the first failure, so a single unexpected NULL silently
+		// leaves the trailing fields (quality_score, usage_count, confidence,
+		// created_at, similarity) at their zero values. That produced rankings
+		// computed from all-zero scores and 0001-01-01 timestamps.
+		if err := rows.Scan(&c.ID, &c.Title, &c.Summary, &c.Content, &c.TokenCount, &c.Type,
 			&c.Repository, &c.Language, &c.QualityScore, &c.UsageCount, &c.Confidence,
-			&c.CreatedAt, &c.Similarity)
+			&c.CreatedAt, &c.Similarity); err != nil {
+			return nil, fmt.Errorf("scan chunk row: %w", err)
+		}
 		results = append(results, c)
 	}
-	return results, nil
+	return results, rows.Err()
 }
 
 func (r *ChunkRepo) Count(ctx context.Context, orgID string) (int, error) {
@@ -180,6 +196,34 @@ func (r *FactRepo) FindByEntities(ctx context.Context, entities []string, orgID 
 		facts = append(facts, f)
 	}
 	return facts, nil
+}
+
+// FindRecent returns the most recently created active facts for an org. Used
+// when a caller asks for facts without naming any entities, where the
+// array-overlap predicate in FindByEntities would match nothing.
+func (r *FactRepo) FindRecent(ctx context.Context, orgID string, limit int) ([]models.Fact, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, content, type, entities, confidence, usage_count, repository, created_at
+		FROM memory_facts
+		WHERE organization_id = $1
+			AND temporal_valid_until IS NULL
+		ORDER BY created_at DESC
+		LIMIT $2`, orgID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var facts []models.Fact
+	for rows.Next() {
+		var f models.Fact
+		if err := rows.Scan(&f.ID, &f.Content, &f.Type, &f.Entities, &f.Confidence,
+			&f.UsageCount, &f.Repository, &f.CreatedAt); err != nil {
+			return nil, err
+		}
+		facts = append(facts, f)
+	}
+	return facts, rows.Err()
 }
 
 func (r *FactRepo) GetHistory(ctx context.Context, entity, orgID string, limit int) ([]models.Fact, error) {
@@ -250,6 +294,10 @@ func (r *StatsRepo) GetCounts(ctx context.Context, orgID string) (map[string]int
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// VectorParam renders an embedding as a pgvector literal for use as a query
+// parameter, or nil when there is no vector so the column is written as NULL.
+func VectorParam(v []float64) *string { return vectorToString(v) }
 
 func vectorToString(v []float64) *string {
 	if len(v) == 0 {

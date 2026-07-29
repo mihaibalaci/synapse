@@ -27,6 +27,13 @@ import (
 	"github.com/mihaibalaci/synapse/internal/storage"
 )
 
+// Embedder turns a query into a vector so the semantic signal can run. It is
+// an interface rather than a concrete type to keep this package independent of
+// the ingestion package and its provider configuration.
+type Embedder interface {
+	Embed(ctx context.Context, text string) ([]float64, error)
+}
+
 // Engine orchestrates the full retrieval pipeline.
 type Engine struct {
 	db    *storage.DB
@@ -34,11 +41,16 @@ type Engine struct {
 
 	chunks *storage.ChunkRepo
 	facts  *storage.FactRepo
+
+	// embedder may be nil, in which case the semantic signal is skipped and
+	// retrieval falls back to keyword and entity matching.
+	embedder Embedder
 }
 
-// NewEngine creates a retrieval engine with the given dependencies.
-func NewEngine(db *storage.DB, cache *storage.Cache, chunks *storage.ChunkRepo, facts *storage.FactRepo) *Engine {
-	return &Engine{db: db, cache: cache, chunks: chunks, facts: facts}
+// NewEngine creates a retrieval engine with the given dependencies. Passing a
+// nil embedder disables the semantic signal.
+func NewEngine(db *storage.DB, cache *storage.Cache, chunks *storage.ChunkRepo, facts *storage.FactRepo, embedder Embedder) *Engine {
+	return &Engine{db: db, cache: cache, chunks: chunks, facts: facts, embedder: embedder}
 }
 
 // Search executes the full hybrid retrieval pipeline.
@@ -73,12 +85,27 @@ func (e *Engine) Search(ctx context.Context, req *models.SearchRequest, claims *
 	keywordCh := make(chan signalResult, 1)
 	entityCh := make(chan signalResult, 1)
 
-	// Signal 1: Semantic (vector ANN)
+	// Signal 1: Semantic (vector ANN over pgvector).
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// For now, use keyword search as fallback (embedding requires external call)
-		results, err := e.chunks.SearchByVector(ctx, nil, orgID, 50)
+
+		// Without an embedder there is no query vector, and passing nil would
+		// make the similarity NULL for every row. Skip the signal instead of
+		// polluting the fusion with meaningless scores.
+		if e.embedder == nil {
+			semanticCh <- signalResult{}
+			return
+		}
+
+		queryVec, err := e.embedder.Embed(ctx, req.Query)
+		if err != nil {
+			slog.Warn("Query embedding failed; semantic signal skipped", "error", err)
+			semanticCh <- signalResult{}
+			return
+		}
+
+		results, err := e.chunks.SearchByVector(ctx, queryVec, orgID, 50)
 		candidates := make([]candidate, len(results))
 		for i, r := range results {
 			candidates[i] = candidate{

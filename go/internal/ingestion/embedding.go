@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -20,18 +21,24 @@ type EmbeddingClient struct {
 	dimensions int
 	url        string
 	apiKey     string
+	numThread  int
 	client     *http.Client
 }
 
 // NewEmbeddingClient creates an embedding client from environment config.
 func NewEmbeddingClient() *EmbeddingClient {
+	// runtime.NumCPU reflects the cgroup-visible CPU count, which is what local
+	// inference should be sized to. EMBEDDING_NUM_THREADS overrides it.
+	threads := envIntOr("EMBEDDING_NUM_THREADS", runtime.NumCPU())
+
 	return &EmbeddingClient{
 		provider:   envOr("EMBEDDING_PROVIDER", "local"),
 		model:      envOr("EMBEDDING_MODEL", "synapse-local-1536"),
 		dimensions: envIntOr("EMBEDDING_DIMENSIONS", 1536),
-		url:        os.Getenv("EMBEDDING_URL"),
+		url:        envOr("EMBEDDING_URL", "http://localhost:11434"),
 		apiKey:     os.Getenv("OPENAI_API_KEY"),
-		client:     &http.Client{Timeout: 30 * time.Second},
+		numThread:  threads,
+		client:     &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -114,28 +121,58 @@ func (e *EmbeddingClient) callOpenAI(ctx context.Context, texts []string) ([][]f
 	return embeddings, nil
 }
 
+// callOllama embeds a batch via Ollama's /api/embed endpoint.
+//
+// Two details matter for latency. First, /api/embed accepts an array and
+// returns all vectors in one round trip, unlike the older /api/embeddings which
+// takes a single prompt. Second, num_thread must be set explicitly: inside a
+// container llama.cpp reads the host's CPU count, so on a 4-core LXC guest it
+// defaults to 16 threads and thrashes. Measured on the test box, a short embed
+// went from ~8s at the default to ~57ms with num_thread matching the real core
+// count.
 func (e *EmbeddingClient) callOllama(ctx context.Context, texts []string) ([][]float64, error) {
-	var embeddings [][]float64
-	for _, text := range texts {
-		body := map[string]any{"model": e.model, "prompt": text}
-		data, _ := json.Marshal(body)
-
-		req, _ := http.NewRequestWithContext(ctx, "POST", e.url+"/api/embeddings", bytes.NewReader(data))
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := e.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		var result struct {
-			Embedding []float64 `json:"embedding"`
-		}
-		json.NewDecoder(resp.Body).Decode(&result)
-		embeddings = append(embeddings, result.Embedding)
+	body := map[string]any{
+		"model":   e.model,
+		"input":   texts,
+		"options": map[string]any{"num_thread": e.numThread},
 	}
-	return embeddings, nil
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ollama request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.url+"/api/embed", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ollama embed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return nil, fmt.Errorf("ollama read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama %d: %s", resp.StatusCode,
+			string(payload[:min(300, len(payload))]))
+	}
+
+	var result struct {
+		Embeddings [][]float64 `json:"embeddings"`
+	}
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return nil, fmt.Errorf("ollama decode: %w", err)
+	}
+	if len(result.Embeddings) != len(texts) {
+		return nil, fmt.Errorf("ollama returned %d embeddings for %d inputs",
+			len(result.Embeddings), len(texts))
+	}
+	return result.Embeddings, nil
 }
 
 func (e *EmbeddingClient) callTEI(ctx context.Context, texts []string) ([][]float64, error) {

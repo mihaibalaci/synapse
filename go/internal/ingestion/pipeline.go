@@ -35,62 +35,121 @@ func NewPipeline(db *storage.DB, cache *storage.Cache, objects *storage.ObjectSt
 	}
 }
 
-// ProcessSession handles a complete session: parse → segment → embed → enqueue enrichment.
+// ProcessSession handles a complete session: load raw → segment → embed →
+// store chunks → extract facts → index.
+//
+// This is the single canonical implementation of the ingestion pipeline, run by
+// the worker rather than inline in the request handler. It is idempotent and
+// safe to retry: the raw conversation lives in object storage, chunk inserts use
+// ON CONFLICT DO NOTHING, and previously written chunks for the session are
+// cleared first so a partial run does not leave duplicates behind.
 func (p *Pipeline) ProcessSession(ctx context.Context, sessionID, orgID string) error {
 	slog.Info("Processing session", "sessionId", sessionID)
 
-	// 1. Load raw session from S3
-	key := fmt.Sprintf("sessions/%s/%s.json", orgID, sessionID)
-	data, err := p.objects.Get(ctx, key)
-	if err != nil {
-		return fmt.Errorf("load raw session: %w", err)
+	// 1. Read the session row for the attribution and context that the raw
+	// payload alone does not carry authoritatively.
+	var (
+		developerID string
+		storageKey  string
+		metadata    []byte
+	)
+	if err := p.db.QueryRow(ctx, `
+		SELECT developer_id, raw_storage_key, COALESCE(metadata, '{}')
+		FROM sessions WHERE id = $1`, sessionID,
+	).Scan(&developerID, &storageKey, &metadata); err != nil {
+		return fmt.Errorf("load session row: %w", err)
+	}
+	if storageKey == "" {
+		return fmt.Errorf("session %s has no raw object to process", sessionID)
 	}
 
-	// 2. Parse messages
+	var meta struct {
+		Source     string `json:"source"`
+		Repository string `json:"repository"`
+		Language   string `json:"language"`
+	}
+	_ = json.Unmarshal(metadata, &meta)
+
+	// 2. Load the raw conversation from object storage.
+	data, err := p.objects.Get(ctx, storageKey)
+	if err != nil {
+		return fmt.Errorf("load raw session %s: %w", storageKey, err)
+	}
+
 	var session struct {
 		Messages []models.Message `json:"messages"`
-		Metadata json.RawMessage  `json:"metadata"`
 	}
 	if err := json.Unmarshal(data, &session); err != nil {
 		return fmt.Errorf("parse session: %w", err)
 	}
+	if len(session.Messages) == 0 {
+		return fmt.Errorf("session %s has no messages", sessionID)
+	}
 
-	// 3. Segment into chunks
-	chunks := p.segment(session.Messages, sessionID, orgID)
+	// 3. Clear any chunks from an earlier partial attempt so a retry does not
+	// accumulate duplicates. Cascades clean up the dependent index rows.
+	if err := p.db.Exec(ctx, `DELETE FROM memory_facts WHERE source_session_id = $1`, sessionID); err != nil {
+		return fmt.Errorf("clear previous facts: %w", err)
+	}
+	if err := p.db.Exec(ctx, `DELETE FROM chunks WHERE session_id = $1`, sessionID); err != nil {
+		return fmt.Errorf("clear previous chunks: %w", err)
+	}
+
+	// 4. Segment.
+	chunks := p.segment(session.Messages, sessionID, orgID, developerID, meta.Repository, meta.Language)
+	if len(chunks) == 0 {
+		return fmt.Errorf("session %s produced no chunks", sessionID)
+	}
 	slog.Info("Segmented", "sessionId", sessionID, "chunks", len(chunks))
 
-	// 4. Embed each chunk
+	// 5. Embed in one batch. A failure is not fatal: chunks remain findable by
+	// keyword search and `synapse embed-backfill` can fill the vectors in later.
 	texts := make([]string, len(chunks))
 	for i, c := range chunks {
-		texts[i] = c.Title + "\n" + c.Summary + "\n" + c.Content
+		texts[i] = c.Content
 	}
 	embeddings, err := p.embedder.EmbedBatch(ctx, texts)
 	if err != nil {
-		slog.Warn("Embedding failed, continuing without vectors", "error", err)
+		slog.Warn("Embedding failed, storing chunks without vectors",
+			"sessionId", sessionID, "error", err)
+	} else if len(embeddings) != len(chunks) {
+		slog.Warn("Embedding count mismatch, storing chunks without vectors",
+			"sessionId", sessionID, "want", len(chunks), "got", len(embeddings))
+		embeddings = nil
 	}
 
-	// 5. Store chunks in DB
+	// 6. Store chunks. A storage failure must fail the job so it is retried,
+	// otherwise the session would be marked searchable while holding no content.
 	for i := range chunks {
-		if i < len(embeddings) {
+		if embeddings != nil {
 			chunks[i].Embedding = embeddings[i]
 		}
 		if err := p.storeChunk(ctx, &chunks[i]); err != nil {
-			slog.Error("Store chunk failed", "chunkId", chunks[i].ID, "error", err)
+			return fmt.Errorf("store chunk %s: %w", chunks[i].ID, err)
 		}
 	}
 
-	// 6. Enqueue enrichment jobs (facts, knowledge, dedup, graph, index)
-	for _, chunk := range chunks {
-		for _, jobType := range []string{"facts", "knowledge", "dedup", "graph", "index"} {
-			job := Job{Type: jobType, ChunkID: chunk.ID, OrganizationID: orgID}
-			data, _ := json.Marshal(job)
-			p.cache.Enqueue(ctx, "synapse:"+jobType, data)
+	// 7. Extract facts and mark searchable for each chunk. Done directly rather
+	// than fanned out to more queues so that a session is either fully processed
+	// or retried as a whole.
+	for _, c := range chunks {
+		if err := p.ExtractFacts(ctx, c.ID, orgID); err != nil {
+			slog.Warn("Fact extraction failed", "chunkId", c.ID, "error", err)
+		}
+		if err := p.IndexSearch(ctx, c.ID); err != nil {
+			return fmt.Errorf("index chunk %s: %w", c.ID, err)
 		}
 	}
 
-	// 7. Update session status
-	p.db.Exec(ctx, `UPDATE sessions SET searchable_status = 'searchable', updated_at = NOW() WHERE id = $1`, sessionID)
+	// 8. Mark the session done.
+	if err := p.db.Exec(ctx, `
+		UPDATE sessions
+		   SET searchable_status = 'searchable', status = 'indexed', updated_at = NOW()
+		 WHERE id = $1`, sessionID); err != nil {
+		return fmt.Errorf("mark session searchable: %w", err)
+	}
 
+	slog.Info("Session processed", "sessionId", sessionID, "chunks", len(chunks))
 	return nil
 }
 
@@ -100,41 +159,52 @@ func (p *Pipeline) ExtractFacts(ctx context.Context, chunkID, orgID string) erro
 	var content, authorID, repository, language string
 	var sessionID *string
 	err := p.db.QueryRow(ctx, `
-		SELECT content, author_id, repository, language, session_id
+		SELECT content, author_id, COALESCE(repository, ''), language, session_id
 		FROM chunks WHERE id = $1`, chunkID,
 	).Scan(&content, &authorID, &repository, &language, &sessionID)
 	if err != nil {
-		return err
+		return fmt.Errorf("load chunk %s: %w", chunkID, err)
 	}
 
 	// Heuristic fact extraction
 	facts := extractFactsHeuristic(content)
 
 	for _, f := range facts {
-		fact := &models.Fact{
-			ID:             uuid.New().String(),
-			Content:        f.content,
-			Type:           f.factType,
-			Entities:       f.entities,
-			ExtractedFrom:  f.source,
-			AuthorID:       authorID,
-			OrganizationID: orgID,
-			Scope:          "organization",
-			Confidence:     0.7,
-			Repository:     repository,
-			Language:       language,
-			SourceChunkID:  &chunkID,
-			SourceSessionID: sessionID,
+		entities := f.entities
+		if entities == nil {
+			entities = []string{}
 		}
 
-		// Embed the fact
-		embedding, err := p.embedder.Embed(ctx, fact.Content)
-		if err == nil {
+		fact := &models.Fact{
+			ID:              uuid.New().String(),
+			Content:         f.content,
+			Type:            f.factType,
+			Entities:        entities,
+			ExtractedFrom:   f.source,
+			AuthorID:        authorID,
+			OrganizationID:  orgID,
+			Scope:           "organization",
+			Confidence:      0.7,
+			Repository:      repository,
+			Language:        language,
+			SourceChunkID:   &chunkID,
+			SourceSessionID: sessionID,
+			// memory_facts.frameworks is NOT NULL, so an empty slice is required
+			// rather than a nil one.
+			Frameworks: []string{},
+		}
+
+		// Embed the fact so it can participate in vector search later.
+		if embedding, err := p.embedder.Embed(ctx, fact.Content); err == nil {
 			fact.Embedding = embedding
 			fact.EmbeddingModel = p.embedder.Model()
+		} else {
+			slog.Warn("Fact embedding failed", "chunkId", chunkID, "error", err)
 		}
 
-		p.facts.Create(ctx, fact)
+		if err := p.facts.Create(ctx, fact); err != nil {
+			return fmt.Errorf("create fact: %w", err)
+		}
 	}
 
 	slog.Debug("Facts extracted", "chunkId", chunkID, "count", len(facts))
@@ -181,10 +251,12 @@ type chunk struct {
 	TokenCount     int
 	Type           string
 	AuthorID       string
+	Repository     string
+	Language       string
 	Embedding      []float64
 }
 
-func (p *Pipeline) segment(messages []models.Message, sessionID, orgID string) []chunk {
+func (p *Pipeline) segment(messages []models.Message, sessionID, orgID, authorID, repo, language string) []chunk {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -201,7 +273,7 @@ func (p *Pipeline) segment(messages []models.Message, sessionID, orgID string) [
 
 		if tokenCount+lineTokens > 1200 && tokenCount > 200 {
 			// Flush current chunk
-			chunks = append(chunks, p.buildChunk(current.String(), tokenCount, sessionID, orgID, chunkIndex))
+			chunks = append(chunks, p.buildChunk(current.String(), tokenCount, sessionID, orgID, authorID, repo, language, chunkIndex))
 			current.Reset()
 			tokenCount = 0
 			chunkIndex++
@@ -213,13 +285,13 @@ func (p *Pipeline) segment(messages []models.Message, sessionID, orgID string) [
 
 	// Flush remaining
 	if current.Len() > 0 {
-		chunks = append(chunks, p.buildChunk(current.String(), tokenCount, sessionID, orgID, chunkIndex))
+		chunks = append(chunks, p.buildChunk(current.String(), tokenCount, sessionID, orgID, authorID, repo, language, chunkIndex))
 	}
 
 	return chunks
 }
 
-func (p *Pipeline) buildChunk(content string, tokens int, sessionID, orgID string, index int) chunk {
+func (p *Pipeline) buildChunk(content string, tokens int, sessionID, orgID, authorID, repo, language string, index int) chunk {
 	title := extractTitle(content)
 	summary := extractSummary(content)
 
@@ -232,32 +304,25 @@ func (p *Pipeline) buildChunk(content string, tokens int, sessionID, orgID strin
 		Content:        content,
 		TokenCount:     tokens,
 		Type:           "discussion",
-		AuthorID:       "system", // Will be set from session metadata
+		AuthorID:       authorID,
+		Repository:     repo,
+		Language:       language,
 	}
 }
 
 func (p *Pipeline) storeChunk(ctx context.Context, c *chunk) error {
-	var embStr *string
-	if len(c.Embedding) > 0 {
-		s := "["
-		for i, v := range c.Embedding {
-			if i > 0 {
-				s += ","
-			}
-			s += fmt.Sprintf("%f", v)
-		}
-		s += "]"
-		embStr = &s
-	}
-
+	// repository must be written rather than left NULL: it is the only nullable
+	// column the search queries read, and a NULL there used to abort the row
+	// scan. embedding_model records the model that actually produced the vector.
 	return p.db.Exec(ctx, `
 		INSERT INTO chunks (id, session_id, title, summary, content, token_count, type,
-			author_id, organization_id, embedding, embedding_model, embedding_version,
-			searchable_status, confidence, quality_score, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::vector,$11,1,'searchable','high',0.5,NOW(),NOW())
+			repository, language, author_id, organization_id, embedding, embedding_model,
+			embedding_version, searchable_status, confidence, quality_score, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,1,'searchable','high',0.5,NOW(),NOW())
 		ON CONFLICT DO NOTHING`,
 		c.ID, c.SessionID, c.Title, c.Summary, c.Content, c.TokenCount, c.Type,
-		c.AuthorID, c.OrganizationID, embStr, "synapse-local-1536",
+		c.Repository, c.Language, c.AuthorID, c.OrganizationID,
+		storage.VectorParam(c.Embedding), p.embedder.Model(),
 	)
 }
 
