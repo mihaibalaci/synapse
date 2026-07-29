@@ -15,8 +15,12 @@ import (
 	"github.com/mihaibalaci/synapse/internal/middleware"
 )
 
+// appInstance holds the App reference for handlers that need DB access.
+var appInstance *App
+
 // NewRouter creates the main HTTP router with all middleware and routes.
 func NewRouter(cfg *config.Config, app *App) http.Handler {
+	appInstance = app
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -224,13 +228,59 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	if claims != nil {
 		orgID = claims.OrganizationID
 	}
+
+	// Query real counts from database
+	ctx := r.Context()
+	var sessions, chunks, facts, searchIdx, clusters, knowledge, graphNodes int
+
+	row := appInstance.DB.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM sessions WHERE organization_id = $1),
+		(SELECT count(*) FROM chunks WHERE organization_id = $1),
+		(SELECT count(*) FROM memory_facts WHERE organization_id = $1),
+		(SELECT count(*) FROM search_index_entries WHERE organization_id = $1 AND is_searchable),
+		(SELECT count(*) FROM chunk_clusters WHERE organization_id = $1),
+		(SELECT count(*) FROM knowledge_records WHERE organization_id = $1),
+		(SELECT count(*) FROM graph_nodes WHERE organization_id = $1)
+	`, orgID)
+	row.Scan(&sessions, &chunks, &facts, &searchIdx, &clusters, &knowledge, &graphNodes)
+
+	// Recent activity
+	rows, _ := appInstance.DB.Query(ctx, `
+		SELECT id, developer_id, organization_id, searchable_status, enrichment_status,
+			total_tokens, created_at, updated_at
+		FROM sessions WHERE organization_id = $1
+		ORDER BY updated_at DESC LIMIT 20`, orgID)
+	var activity []map[string]any
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, devID, org, searchStatus, enrichStatus string
+			var tokens int
+			var createdAt, updatedAt time.Time
+			rows.Scan(&id, &devID, &org, &searchStatus, &enrichStatus, &tokens, &createdAt, &updatedAt)
+			activity = append(activity, map[string]any{
+				"id": id, "developerId": devID, "organizationId": org,
+				"searchableStatus": searchStatus, "enrichmentStatus": enrichStatus,
+				"totalTokens": tokens, "createdAt": createdAt.Format(time.RFC3339),
+				"updatedAt": updatedAt.Format(time.RFC3339),
+			})
+		}
+	}
+	if activity == nil {
+		activity = []map[string]any{}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"organization": orgID,
 		"timestamp":    time.Now().UTC().Format(time.RFC3339),
-		"counts":       map[string]int{"sessions": 0, "chunks": 0, "facts": 0, "clusters": 0, "graphNodes": 0, "searchableChunks": 0, "knowledgeRecords": 0},
-		"processing":   map[string]int{"activeSessions": 0, "searchable": 0, "blocked": 0, "failed": 0},
-		"queues":       map[string]int{"total": 0},
-		"recentActivity": []any{},
+		"counts": map[string]int{
+			"sessions": sessions, "chunks": chunks, "facts": facts,
+			"searchableChunks": searchIdx, "clusters": clusters,
+			"knowledgeRecords": knowledge, "graphNodes": graphNodes,
+		},
+		"processing":     map[string]int{"activeSessions": 0, "searchable": sessions, "blocked": 0, "failed": 0},
+		"queues":         map[string]int{"total": 0},
+		"recentActivity": activity,
 	})
 }
 
