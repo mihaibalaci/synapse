@@ -254,4 +254,4 @@ helm install synapse ./deploy/helm/synapse -f profiles/on-prem.yaml
 
 ## License
 
-Built by MihaiBalaci
+MIT License — see [LICENSE](LICENSE) for details.
