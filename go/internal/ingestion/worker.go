@@ -122,29 +122,28 @@ func (wp *WorkerPool) run(id int) {
 		default:
 		}
 
-		// Round-robin across queues
-		for _, queue := range wp.queues {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			data, err := wp.cache.Dequeue(ctx, queue, 1*time.Second)
-			cancel()
+		// One blocking call across every queue, so an idle queue costs nothing.
+		// Queues are listed in priority order and BRPOP honours that order.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		data, queue, err := wp.cache.DequeueAny(ctx, 2*time.Second, wp.queues...)
+		cancel()
 
-			if err != nil {
-				slog.Warn("Dequeue error", "queue", queue, "error", err)
-				time.Sleep(500 * time.Millisecond) // Back off on errors
-				continue
-			}
-			if data == nil {
-				continue
-			}
-
-			var job Job
-			if err := json.Unmarshal(data, &job); err != nil {
-				slog.Error("Invalid job", "queue", queue, "error", err)
-				continue
-			}
-
-			wp.processJob(job)
+		if err != nil {
+			slog.Warn("Dequeue error", "error", err)
+			time.Sleep(500 * time.Millisecond) // Back off on errors
+			continue
 		}
+		if data == nil {
+			continue // timed out with nothing queued
+		}
+
+		var job Job
+		if err := json.Unmarshal(data, &job); err != nil {
+			slog.Error("Invalid job, discarding", "queue", queue, "error", err)
+			continue
+		}
+
+		wp.processJob(job)
 	}
 }
 

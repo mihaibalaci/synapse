@@ -21,6 +21,21 @@ const StaleAfter = 10 * time.Minute
 // redone; this finds those sessions and queues them again. Sessions with no raw
 // object are skipped, since there is nothing to reprocess them from.
 func (wp *WorkerPool) ReapStranded(ctx context.Context) (int, error) {
+	// Only reap once the queue has drained.
+	//
+	// Recovery exists for work that nothing refers to any more. While jobs are
+	// still queued, an unfinished session is not necessarily orphaned: it may
+	// simply be waiting its turn. Re-queueing on a staleness timer alone means a
+	// backlog that takes longer than StaleAfter to drain gets its sessions
+	// enqueued a second time, and the queue grows faster than it is consumed.
+	// Observed during a 5000 session load test, where the depth climbed above
+	// the amount of outstanding work.
+	depth, err := wp.cache.QueueLen(ctx, "synapse:session")
+	if err == nil && depth > 0 {
+		slog.Debug("Skipping recovery pass while jobs are still queued", "queueDepth", depth)
+		return 0, nil
+	}
+
 	rows, err := wp.db.Query(ctx, `
 		SELECT id, organization_id
 		FROM sessions

@@ -73,6 +73,34 @@ class ApiService {
   Future<Map<String, dynamic>> getRoles() => get('/api/v1/admin/roles');
 
   Future<Map<String, dynamic>> getMetrics() => get('/api/v1/stats/metrics');
+
+  // ─── LLM Configuration ─────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getLlmSettings() =>
+      get('/api/v1/admin/settings/llm');
+
+  Future<Map<String, dynamic>> saveLlmSettings(Map<String, dynamic> settings) =>
+      put('/api/v1/admin/settings/llm', settings);
+
+  /// Probes the provider with a real completion. Returns ok/message/latencyMs.
+  /// Passing the unsaved form lets the operator test before committing.
+  Future<Map<String, dynamic>> testLlmSettings(Map<String, dynamic> settings) =>
+      post('/api/v1/admin/settings/llm/test', settings);
+
+  /// Lists models the provider has available, for the model picker.
+  Future<Map<String, dynamic>> getLlmModels({
+    String? provider,
+    String? baseUrl,
+  }) {
+    final params = <String, String>{
+      if (provider != null && provider.isNotEmpty) 'provider': provider,
+      if (baseUrl != null && baseUrl.isNotEmpty) 'baseUrl': baseUrl,
+    };
+    final query = params.entries
+        .map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}')
+        .join('&');
+    return get('/api/v1/admin/settings/llm/models${query.isEmpty ? '' : '?$query'}');
+  }
 }
 
 class ApiException implements Exception {

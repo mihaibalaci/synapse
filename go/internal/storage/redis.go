@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -66,6 +68,71 @@ func (c *Cache) SetCached(ctx context.Context, key string, data []byte, ttl time
 	return c.Client.Set(ctx, key, data, ttl).Err()
 }
 
+// CacheStats describes the state of the search-response cache as Redis sees it.
+//
+// Entry count and eviction figures come from the server rather than in-process
+// counters, so they survive a restart and reflect what is actually resident.
+type CacheStats struct {
+	Entries     int64 `json:"entries"`     // live search: keys
+	Queues      int64 `json:"queues"`      // pending job entries across queues
+	Evicted     int64 `json:"evicted"`     // keys dropped under memory pressure
+	Expired     int64 `json:"expired"`     // keys removed by TTL
+	MemoryBytes int64 `json:"memoryBytes"` // resident dataset size
+}
+
+// Stats samples cache state. SCAN is used rather than KEYS so a large keyspace
+// does not block the server.
+func (c *Cache) Stats(ctx context.Context) CacheStats {
+	var stats CacheStats
+
+	var cursor uint64
+	for {
+		keys, next, err := c.Client.Scan(ctx, cursor, "search:*", 500).Result()
+		if err != nil {
+			break
+		}
+		stats.Entries += int64(len(keys))
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+
+	for _, q := range []string{
+		"synapse:session", "synapse:facts", "synapse:knowledge",
+		"synapse:dedup", "synapse:graph", "synapse:index",
+	} {
+		if n, err := c.Client.LLen(ctx, q).Result(); err == nil {
+			stats.Queues += n
+		}
+	}
+
+	if info, err := c.Client.Info(ctx, "stats", "memory").Result(); err == nil {
+		stats.Evicted = parseRedisInfoInt(info, "evicted_keys:")
+		stats.Expired = parseRedisInfoInt(info, "expired_keys:")
+		stats.MemoryBytes = parseRedisInfoInt(info, "used_memory:")
+	}
+
+	return stats
+}
+
+// parseRedisInfoInt pulls a single numeric field out of an INFO reply.
+func parseRedisInfoInt(info, field string) int64 {
+	idx := strings.Index(info, field)
+	if idx < 0 {
+		return 0
+	}
+	rest := info[idx+len(field):]
+	if end := strings.IndexAny(rest, "\r\n"); end >= 0 {
+		rest = rest[:end]
+	}
+	v, err := strconv.ParseInt(strings.TrimSpace(rest), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
 // IncrementPopular tracks popular queries for prewarming.
 func (c *Cache) IncrementPopular(ctx context.Context, org, query string) {
 	key := fmt.Sprintf("popular:%s", org)
@@ -95,17 +162,35 @@ func (c *Cache) Enqueue(ctx context.Context, queue string, data []byte) error {
 
 // Dequeue pops a job from a Redis list (blocking with timeout).
 func (c *Cache) Dequeue(ctx context.Context, queue string, timeout time.Duration) ([]byte, error) {
-	result, err := c.Client.BRPop(ctx, timeout, queue).Result()
+	data, _, err := c.DequeueAny(ctx, timeout, queue)
+	return data, err
+}
+
+// DequeueAny blocks on several queues at once and returns the first job to
+// arrive, along with the queue it came from.
+//
+// BRPOP takes multiple keys and returns as soon as any of them has an element,
+// checking them in the order given. Polling each queue in turn with its own
+// blocking call instead would spend the full timeout on every empty queue: with
+// six queues and a one second timeout, a worker would waste five seconds per
+// cycle whenever only one queue had work.
+func (c *Cache) DequeueAny(ctx context.Context, timeout time.Duration, queues ...string) ([]byte, string, error) {
+	if len(queues) == 0 {
+		return nil, "", nil
+	}
+
+	result, err := c.Client.BRPop(ctx, timeout, queues...).Result()
 	if err == redis.Nil {
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	// BRPOP replies with [key, value].
 	if len(result) < 2 {
-		return nil, nil
+		return nil, "", nil
 	}
-	return []byte(result[1]), nil
+	return []byte(result[1]), result[0], nil
 }
 
 // QueueLen returns the length of a queue.

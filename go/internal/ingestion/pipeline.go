@@ -168,8 +168,27 @@ func (p *Pipeline) ExtractFacts(ctx context.Context, chunkID, orgID string) erro
 
 	// Heuristic fact extraction
 	facts := extractFactsHeuristic(content)
+	if len(facts) == 0 {
+		return nil
+	}
 
-	for _, f := range facts {
+	// Embed all facts in one request. One call per fact meant a round trip each,
+	// and with several facts per chunk that dominated the job time.
+	factTexts := make([]string, len(facts))
+	for i, f := range facts {
+		factTexts[i] = f.content
+	}
+	factVectors, embedErr := p.embedder.EmbedBatch(ctx, factTexts)
+	if embedErr != nil {
+		slog.Warn("Fact embedding failed", "chunkId", chunkID, "error", embedErr)
+		factVectors = nil
+	} else if len(factVectors) != len(facts) {
+		slog.Warn("Fact embedding count mismatch",
+			"chunkId", chunkID, "want", len(facts), "got", len(factVectors))
+		factVectors = nil
+	}
+
+	for idx, f := range facts {
 		entities := f.entities
 		if entities == nil {
 			entities = []string{}
@@ -194,12 +213,9 @@ func (p *Pipeline) ExtractFacts(ctx context.Context, chunkID, orgID string) erro
 			Frameworks: []string{},
 		}
 
-		// Embed the fact so it can participate in vector search later.
-		if embedding, err := p.embedder.Embed(ctx, fact.Content); err == nil {
-			fact.Embedding = embedding
+		if factVectors != nil {
+			fact.Embedding = factVectors[idx]
 			fact.EmbeddingModel = p.embedder.Model()
-		} else {
-			slog.Warn("Fact embedding failed", "chunkId", chunkID, "error", err)
 		}
 
 		if err := p.facts.Create(ctx, fact); err != nil {

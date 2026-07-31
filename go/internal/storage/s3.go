@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,6 +35,87 @@ type ObjectStore struct {
 	SecretKey string
 
 	client *http.Client
+
+	// I/O counters, incremented in the store itself rather than at call sites so
+	// every path is measured and no caller can forget to record.
+	puts      atomic.Int64
+	gets      atomic.Int64
+	bytesPut  atomic.Int64
+	bytesGot  atomic.Int64
+	putErrors atomic.Int64
+	getErrors atomic.Int64
+
+	// metrics, when set, publishes the same counters to Redis so they aggregate
+	// across processes. The API and the worker are separate processes with
+	// separate memory: the worker performs nearly all the reads, so
+	// process-local counters would report zero gets on the API's metrics
+	// endpoint. This matters more as workers are scaled out.
+	metrics *Cache
+}
+
+// objectStoreCounterKey is the Redis hash holding cross-process I/O totals.
+const objectStoreCounterKey = "synapse:metrics:objectstore"
+
+// AttachMetrics publishes I/O counters to Redis so every process contributes to
+// one total.
+func (s *ObjectStore) AttachMetrics(c *Cache) { s.metrics = c }
+
+// publish increments a shared counter, best effort: metrics must never fail an
+// I/O operation.
+func (s *ObjectStore) publish(field string, delta int64) {
+	if s.metrics == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.metrics.Client.HIncrBy(ctx, objectStoreCounterKey, field, delta)
+}
+
+// ObjectStoreStats is a snapshot of cold-storage I/O.
+type ObjectStoreStats struct {
+	Puts      int64 `json:"puts"`
+	Gets      int64 `json:"gets"`
+	BytesPut  int64 `json:"bytesPut"`
+	BytesRead int64 `json:"bytesRead"`
+	PutErrors int64 `json:"putErrors"`
+	GetErrors int64 `json:"getErrors"`
+}
+
+// Stats returns I/O totals. When a metrics sink is attached the figures are the
+// cross-process totals from Redis; otherwise they are this process only.
+func (s *ObjectStore) Stats(ctx context.Context) ObjectStoreStats {
+	local := ObjectStoreStats{
+		Puts:      s.puts.Load(),
+		Gets:      s.gets.Load(),
+		BytesPut:  s.bytesPut.Load(),
+		BytesRead: s.bytesGot.Load(),
+		PutErrors: s.putErrors.Load(),
+		GetErrors: s.getErrors.Load(),
+	}
+	if s.metrics == nil {
+		return local
+	}
+
+	values, err := s.metrics.Client.HGetAll(ctx, objectStoreCounterKey).Result()
+	if err != nil || len(values) == 0 {
+		return local
+	}
+
+	read := func(field string) int64 {
+		v, err := strconv.ParseInt(values[field], 10, 64)
+		if err != nil {
+			return 0
+		}
+		return v
+	}
+	return ObjectStoreStats{
+		Puts:      read("puts"),
+		Gets:      read("gets"),
+		BytesPut:  read("bytesPut"),
+		BytesRead: read("bytesRead"),
+		PutErrors: read("putErrors"),
+		GetErrors: read("getErrors"),
+	}
 }
 
 // unsignedPayload is used when the body is streamed rather than buffered.
@@ -239,8 +322,15 @@ func (s *ObjectStore) Put(ctx context.Context, key string, data []byte, contentT
 	req.ContentLength = int64(len(data))
 
 	if _, _, err := s.do(req, data, "put "+key); err != nil {
+		s.putErrors.Add(1)
+		s.publish("putErrors", 1)
 		return err
 	}
+	s.puts.Add(1)
+	s.bytesPut.Add(int64(len(data)))
+	s.publish("puts", 1)
+	s.publish("bytesPut", int64(len(data)))
+
 	slog.Debug("Object stored", "key", key, "size", len(data))
 	return nil
 }
@@ -253,11 +343,20 @@ func (s *ObjectStore) Get(ctx context.Context, key string) ([]byte, error) {
 	}
 	body, status, err := s.do(req, nil, "get "+key)
 	if status == http.StatusNotFound {
+		s.getErrors.Add(1)
+		s.publish("getErrors", 1)
 		return nil, fmt.Errorf("s3 not found: %s", key)
 	}
 	if err != nil {
+		s.getErrors.Add(1)
+		s.publish("getErrors", 1)
 		return nil, err
 	}
+	s.gets.Add(1)
+	s.bytesGot.Add(int64(len(body)))
+	s.publish("gets", 1)
+	s.publish("bytesRead", int64(len(body)))
+
 	return body, nil
 }
 

@@ -160,6 +160,12 @@ class _SideNav extends StatelessWidget {
             path: '/activity',
             currentPath: currentPath,
           ),
+          _NavItem(
+            icon: Icons.settings_rounded,
+            label: 'Configuration',
+            path: '/settings',
+            currentPath: currentPath,
+          ),
           const Spacer(),
           // Status indicator
           Padding(

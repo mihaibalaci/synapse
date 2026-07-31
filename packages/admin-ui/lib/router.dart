@@ -3,6 +3,7 @@ import 'pages/dashboard/dashboard_page.dart';
 import 'pages/users/users_page.dart';
 import 'pages/system/system_page.dart';
 import 'pages/activity/activity_page.dart';
+import 'pages/settings/settings_page.dart';
 import 'widgets/shell_scaffold.dart';
 
 final appRouter = GoRouter(
@@ -33,6 +34,12 @@ final appRouter = GoRouter(
           path: '/activity',
           pageBuilder: (context, state) => const NoTransitionPage(
             child: ActivityPage(),
+          ),
+        ),
+        GoRoute(
+          path: '/settings',
+          pageBuilder: (context, state) => const NoTransitionPage(
+            child: SettingsPage(),
           ),
         ),
       ],

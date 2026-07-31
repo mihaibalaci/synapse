@@ -21,6 +21,7 @@ type App struct {
 	Chunks   *storage.ChunkRepo
 	Facts    *storage.FactRepo
 	Stats    *storage.StatsRepo
+	Settings *storage.SettingsRepo
 
 	// Embedder generates vectors for chunk content and search queries.
 	Embedder *ingestion.EmbeddingClient
@@ -54,6 +55,7 @@ func NewApp(ctx context.Context, cfg *config.Config) (*App, error) {
 		Chunks:   storage.NewChunkRepo(db),
 		Facts:    storage.NewFactRepo(db),
 		Stats:    storage.NewStatsRepo(db),
+		Settings: storage.NewSettingsRepo(db),
 		Embedder: ingestion.NewEmbeddingClient(),
 	}
 
@@ -61,6 +63,10 @@ func NewApp(ctx context.Context, cfg *config.Config) (*App, error) {
 		"provider", cfg.EmbeddingProvider,
 		"model", cfg.EmbeddingModel,
 		"dimensions", cfg.EmbeddingDimensions)
+
+	// Publish object-store I/O counters to Redis so the API and the workers,
+	// which are separate processes, contribute to a single total.
+	objects.AttachMetrics(cache)
 
 	// Make sure the raw-session bucket exists. Captures are rejected when the
 	// raw write fails, so a missing bucket would take down ingestion entirely.

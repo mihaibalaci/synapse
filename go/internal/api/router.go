@@ -18,6 +18,7 @@ import (
 	"github.com/mihaibalaci/synapse/internal/middleware"
 	"github.com/mihaibalaci/synapse/internal/models"
 	"github.com/mihaibalaci/synapse/internal/retrieval"
+	"github.com/mihaibalaci/synapse/internal/storage"
 )
 
 // appInstance holds the App reference for handlers that need DB access.
@@ -100,6 +101,12 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 		r.Put("/api/v1/admin/users/{id}", handleUpdateUser)
 		r.Delete("/api/v1/admin/users/{id}", handleDeleteUser)
 		r.Get("/api/v1/admin/roles", handleListRoles)
+
+		// Admin: runtime configuration
+		r.Get("/api/v1/admin/settings/llm", handleGetLLMSettings)
+		r.Put("/api/v1/admin/settings/llm", handlePutLLMSettings)
+		r.Post("/api/v1/admin/settings/llm/test", handleTestLLMSettings)
+		r.Get("/api/v1/admin/settings/llm/models", handleListLLMModels)
 	})
 
 	return r
@@ -579,13 +586,36 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	avgMs, p95Ms := latencyStats()
 
+	// Cache and object-store figures are sampled from the systems themselves at
+	// scrape time, so they reflect reality rather than in-process guesses and
+	// survive a restart of this process.
+	var cacheStats storage.CacheStats
+	if appInstance != nil && appInstance.Cache != nil {
+		cacheStats = appInstance.Cache.Stats(r.Context())
+	}
+	var objectStats storage.ObjectStoreStats
+	if appInstance != nil && appInstance.Objects != nil {
+		objectStats = appInstance.Objects.Stats(r.Context())
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"cache": map[string]any{
-			"hits":      metrics.cacheHits,
-			"misses":    metrics.cacheMisses,
-			"hitRate":   metrics.hitRate(),
-			"evictions": metrics.cacheEvictions,
-			"size":      metrics.cacheSize,
+			"hits":        metrics.cacheHits,
+			"misses":      metrics.cacheMisses,
+			"hitRate":     metrics.hitRate(),
+			"evictions":   cacheStats.Evicted,
+			"expired":     cacheStats.Expired,
+			"size":        cacheStats.Entries,
+			"queueDepth":  cacheStats.Queues,
+			"memoryBytes": cacheStats.MemoryBytes,
+		},
+		"objectStorage": map[string]any{
+			"puts":      objectStats.Puts,
+			"gets":      objectStats.Gets,
+			"bytesPut":  objectStats.BytesPut,
+			"bytesRead": objectStats.BytesRead,
+			"putErrors": objectStats.PutErrors,
+			"getErrors": objectStats.GetErrors,
 		},
 		"retrieval": map[string]any{
 			"totalQueries":   metrics.totalQueries,
