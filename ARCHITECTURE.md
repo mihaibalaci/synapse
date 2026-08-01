@@ -6,6 +6,8 @@ Synapse is a single Go binary (`synapse`) that runs as either an API server or a
 
 ## Runtime Components
 
+![Data Flow](docs/assets/data-flow.svg)
+
 | Component | Binary Command | Port | Purpose |
 |-----------|---------------|------|---------|
 | API Server | `synapse serve` | 3000 | HTTP API, auth, search, admin |

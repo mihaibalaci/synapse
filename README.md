@@ -43,6 +43,8 @@ Single Go binary + Flutter admin UI + optional Rust compute kernels.
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+![Data Flow Diagram](docs/assets/data-flow.svg)
+
 ## Quick Start
 
 ```bash
