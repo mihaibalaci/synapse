@@ -4,6 +4,20 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-01
+
+### Added
+- Admin memory browser: search, view, edit, and delete chunks and facts from the Flutter UI.
+- Backend browse endpoints: `GET /api/v1/admin/chunks`, `GET /api/v1/admin/chunks/{id}`, `PUT /api/v1/admin/chunks/{id}`, `DELETE /api/v1/admin/chunks/{id}`, `GET /api/v1/admin/facts`, `DELETE /api/v1/admin/facts/{id}`.
+- Full-text chunk search with `ts_rank` ordering via `?q=` parameter.
+- Fact filtering by type via `?type=` parameter.
+- Pagination via `?limit=` and `?offset=` parameters.
+- Flutter Memory page with tabbed Chunks/Facts view, debounced search, archive confirmation dialog, and fact supersession.
+- Navigation entry: "Memory" in the side nav.
+
+### Changed
+- Chunk deletion is a soft archive (sets `confidence = 'archived'`); fact deletion marks `temporal_valid_until`.
+
 ## [0.5.0] - 2026-08-01
 
 ### Added
@@ -90,6 +104,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - PostgreSQL schema, Redis queue, S3 raw storage.
 - Basic JWT validation middleware.
 
+[0.6.0]: https://github.com/mihaibalaci/synapse/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mihaibalaci/synapse/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mihaibalaci/synapse/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mihaibalaci/synapse/compare/v0.2.0...v0.3.0

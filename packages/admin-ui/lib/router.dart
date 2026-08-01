@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import 'pages/dashboard/dashboard_page.dart';
 import 'pages/login/login_page.dart';
+import 'pages/memory/memory_page.dart';
 import 'pages/users/users_page.dart';
 import 'pages/system/system_page.dart';
 import 'pages/activity/activity_page.dart';
@@ -56,6 +57,11 @@ GoRouter buildRouter(AuthService auth) {
             path: '/settings',
             pageBuilder: (context, state) =>
                 const NoTransitionPage(child: SettingsPage()),
+          ),
+          GoRoute(
+            path: '/memory',
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: MemoryPage()),
           ),
         ],
       ),

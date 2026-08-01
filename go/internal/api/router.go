@@ -124,6 +124,14 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 			r.Put("/settings/llm", handlePutLLMSettings)
 			r.Post("/settings/llm/test", handleTestLLMSettings)
 			r.Get("/settings/llm/models", handleListLLMModels)
+
+			// Memory browser
+			r.Get("/chunks", handleBrowseChunks)
+			r.Get("/chunks/{id}", handleGetChunk)
+			r.Put("/chunks/{id}", handleUpdateChunk)
+			r.Delete("/chunks/{id}", handleDeleteChunk)
+			r.Get("/facts", handleBrowseFacts)
+			r.Delete("/facts/{id}", handleDeleteFact)
 		})
 	})
 

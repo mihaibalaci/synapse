@@ -177,6 +177,12 @@ class _SideNav extends StatelessWidget {
             path: '/settings',
             currentPath: currentPath,
           ),
+          _NavItem(
+            icon: Icons.explore_rounded,
+            label: 'Memory',
+            path: '/memory',
+            currentPath: currentPath,
+          ),
           const Spacer(),
           // Status indicator
           Padding(
