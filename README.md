@@ -1,4 +1,4 @@
-# Synapse
+# <img src="docs/assets/logo.svg" width="36" height="36" align="top" /> Synapse
 
 Synapse is a self-hosted memory service for AI-assisted engineering sessions. The primary runtime is one Go binary, with a Flutter administration UI and optional Rust compute experiments.
 
