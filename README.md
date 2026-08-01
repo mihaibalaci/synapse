@@ -87,12 +87,12 @@ The Flutter web UI provides: Dashboard, Users & Roles, System Health, Activity M
 
 ## Key Design Decisions
 
-- **Embedded migrations** with advisory locking and checksums — schema is always reproducible
-- **Request-context DI** — no mutable globals, testable handlers
-- **Rotating refresh sessions** — HttpOnly cookies with replay revocation
-- **Team/repo isolation** — enforced in SQL, not just UI
-- **Temporal decay** — 30-day half-life keeps recent knowledge prominent
-- **Contradiction detection** — cosine >0.85 + identical entities auto-supersedes
+- **Embedded migrations** with advisory locking and checksums, schema is always reproducible
+- **Request-context DI**: no mutable globals, testable handlers
+- **Rotating refresh sessions** HttpOnly cookies with replay revocation
+- **Team/repo isolation** enforced in SQL, not just UI
+- **Temporal decay** 30-day half-life keeps recent knowledge prominent
+- **Contradiction detection** cosine >0.85 + identical entities auto-supersedes
 
 ## Documentation
 
