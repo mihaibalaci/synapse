@@ -12,7 +12,6 @@ type AuditEntry struct {
 	ID             int64           `json:"id"`
 	Timestamp      time.Time       `json:"timestamp"`
 	ActorID        string          `json:"actorId"`
-	ActorEmail     string          `json:"actorEmail"`
 	OrganizationID string          `json:"organizationId"`
 	Action         string          `json:"action"`
 	ResourceType   string          `json:"resourceType"`
@@ -34,15 +33,15 @@ func (r *AuditRepo) Record(ctx context.Context, entry AuditEntry) error {
 		details = json.RawMessage("{}")
 	}
 	return r.db.Exec(ctx, `
-		INSERT INTO audit_log (actor_id, actor_email, organization_id, action, resource_type, resource_id, details, ip_address, user_agent)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		entry.ActorID, entry.ActorEmail, entry.OrganizationID, entry.Action,
+		INSERT INTO audit_log (user_id, organization_id, action, resource_type, resource_id, metadata, ip_address, user_agent)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		entry.ActorID, entry.OrganizationID, entry.Action,
 		entry.ResourceType, entry.ResourceID, details, entry.IPAddress, entry.UserAgent)
 }
 
 // Query returns recent audit entries for an organization with optional action filter.
 func (r *AuditRepo) Query(ctx context.Context, orgID, action string, limit, offset int) ([]AuditEntry, error) {
-	sql := `SELECT id, timestamp, actor_id, actor_email, organization_id, action, resource_type, resource_id, details, ip_address, user_agent
+	sql := `SELECT id, timestamp, user_id, organization_id, action, resource_type, resource_id, metadata, ip_address, user_agent
 		FROM audit_log WHERE organization_id = $1`
 	args := []any{orgID}
 	if action != "" {
@@ -66,7 +65,7 @@ func (r *AuditRepo) Query(ctx context.Context, orgID, action string, limit, offs
 	var entries []AuditEntry
 	for rows.Next() {
 		var e AuditEntry
-		if err := rows.Scan(&e.ID, &e.Timestamp, &e.ActorID, &e.ActorEmail, &e.OrganizationID,
+		if err := rows.Scan(&e.ID, &e.Timestamp, &e.ActorID, &e.OrganizationID,
 			&e.Action, &e.ResourceType, &e.ResourceID, &e.Details, &e.IPAddress, &e.UserAgent); err != nil {
 			continue
 		}

@@ -12,7 +12,7 @@ import (
 // Audit records an event asynchronously. Failures are logged but never block the request.
 func Audit(app *App, r *http.Request, action, resourceType, resourceID string, details any) {
 	claims := auth.GetClaims(r)
-	actorID, actorEmail, orgID := "", "", ""
+	actorID, orgID := "", ""
 	if claims != nil {
 		actorID = claims.UserID
 		orgID = claims.OrganizationID
@@ -24,7 +24,7 @@ func Audit(app *App, r *http.Request, action, resourceType, resourceID string, d
 	}
 
 	entry := storage.AuditEntry{
-		ActorID: actorID, ActorEmail: actorEmail, OrganizationID: orgID,
+		ActorID: actorID, OrganizationID: orgID,
 		Action: action, ResourceType: resourceType, ResourceID: resourceID,
 		Details: detailsJSON, IPAddress: requestIP(r), UserAgent: r.UserAgent(),
 	}
