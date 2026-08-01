@@ -4,6 +4,17 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-01
+
+### Added
+- Knowledge graph population during ingestion: fact entities are upserted as `graph_nodes`, and co-occurring entities within the same fact create weighted `graph_edges`.
+- Graph-boosted retrieval signal (Signal 4): search queries extract entities and find chunks related to graph neighbors, weighted by edge strength.
+- RRF fusion now operates on 4 signals: semantic, keyword, entity, and graph.
+
+### Changed
+- `IndexGraph` pipeline stage is now a real implementation (previously a stub).
+- Retrieval `scores` struct's `GraphRelevance` field is now populated.
+
 ## [0.3.0] - 2026-08-01
 
 ### Added
@@ -64,6 +75,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - PostgreSQL schema, Redis queue, S3 raw storage.
 - Basic JWT validation middleware.
 
+[0.4.0]: https://github.com/mihaibalaci/synapse/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mihaibalaci/synapse/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mihaibalaci/synapse/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mihaibalaci/synapse/releases/tag/v0.1.0

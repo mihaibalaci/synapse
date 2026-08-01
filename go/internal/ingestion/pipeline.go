@@ -240,9 +240,76 @@ func (p *Pipeline) Deduplicate(ctx context.Context, chunkID, orgID string) error
 	return nil
 }
 
-// IndexGraph updates the knowledge graph with chunk entities.
+// IndexGraph updates the knowledge graph with entities from a chunk's facts.
+// For each fact's entity list, it ensures a node exists per entity and creates
+// co-occurrence edges between every pair of entities within the same fact.
 func (p *Pipeline) IndexGraph(ctx context.Context, chunkID string) error {
-	// TODO: Extract entities from chunk, create graph nodes/edges
+	// Load entities from facts associated with this chunk.
+	rows, err := p.db.Query(ctx, `
+		SELECT DISTINCT organization_id, unnest(entities) AS entity
+		FROM memory_facts WHERE source_chunk_id = $1`, chunkID)
+	if err != nil {
+		return fmt.Errorf("load graph entities: %w", err)
+	}
+	defer rows.Close()
+
+	type orgEntity struct{ org, entity string }
+	var oes []orgEntity
+	for rows.Next() {
+		var oe orgEntity
+		if err := rows.Scan(&oe.org, &oe.entity); err != nil {
+			return fmt.Errorf("scan entity: %w", err)
+		}
+		oes = append(oes, oe)
+	}
+	if len(oes) == 0 {
+		return nil
+	}
+
+	// Upsert nodes (idempotent).
+	for _, oe := range oes {
+		if err := p.db.Exec(ctx, `
+			INSERT INTO graph_nodes (organization_id, name, kind)
+			VALUES ($1, $2, 'entity')
+			ON CONFLICT (organization_id, name, kind) DO UPDATE SET updated_at = NOW()`,
+			oe.org, oe.entity); err != nil {
+			return fmt.Errorf("upsert graph node: %w", err)
+		}
+	}
+
+	// Load fact entity lists to produce co-occurrence edges.
+	factRows, err := p.db.Query(ctx, `
+		SELECT organization_id, entities
+		FROM memory_facts WHERE source_chunk_id = $1 AND cardinality(entities) >= 2`, chunkID)
+	if err != nil {
+		return fmt.Errorf("load fact entities for edges: %w", err)
+	}
+	defer factRows.Close()
+
+	for factRows.Next() {
+		var orgID string
+		var entities []string
+		if err := factRows.Scan(&orgID, &entities); err != nil {
+			return fmt.Errorf("scan edge entities: %w", err)
+		}
+		// Create edges between every pair.
+		for i := 0; i < len(entities); i++ {
+			for j := i + 1; j < len(entities); j++ {
+				if err := p.db.Exec(ctx, `
+					INSERT INTO graph_edges (organization_id, source_id, target_id, relation, weight)
+					SELECT $1,
+						(SELECT id FROM graph_nodes WHERE organization_id = $1 AND name = $2 AND kind = 'entity'),
+						(SELECT id FROM graph_nodes WHERE organization_id = $1 AND name = $3 AND kind = 'entity'),
+						'co_occurs', 1
+					ON CONFLICT (organization_id, source_id, target_id, relation)
+					DO UPDATE SET weight = graph_edges.weight + 1, created_at = NOW()`,
+					orgID, entities[i], entities[j]); err != nil {
+					slog.Debug("Edge upsert failed", "a", entities[i], "b", entities[j], "error", err)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 

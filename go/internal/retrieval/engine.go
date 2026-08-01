@@ -90,6 +90,7 @@ func (e *Engine) Search(ctx context.Context, req *models.SearchRequest, claims *
 	semanticCh := make(chan signalResult, 1)
 	keywordCh := make(chan signalResult, 1)
 	entityCh := make(chan signalResult, 1)
+	graphCh := make(chan signalResult, 1)
 
 	// Signal 1: Semantic (vector ANN over pgvector).
 	wg.Add(1)
@@ -163,12 +164,52 @@ func (e *Engine) Search(ctx context.Context, req *models.SearchRequest, claims *
 		entityCh <- signalResult{candidates: candidates, err: err}
 	}()
 
+	// Signal 4: Graph neighbors — boost chunks whose entities share graph edges
+	// with the query entities.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		entities := extractQueryEntities(req.Query)
+		if len(entities) == 0 {
+			graphCh <- signalResult{}
+			return
+		}
+		rows, err := e.db.Query(ctx, `
+			SELECT DISTINCT c.id, c.title, c.summary, c.content, c.token_count,
+				c.quality_score, c.usage_count, c.confidence, COALESCE(c.repository,''), c.created_at,
+				ge.weight / 10.0 AS score
+			FROM graph_nodes gn
+			JOIN graph_edges ge ON ge.source_id = gn.id OR ge.target_id = gn.id
+			JOIN graph_nodes neighbor ON neighbor.id = CASE WHEN ge.source_id = gn.id THEN ge.target_id ELSE ge.source_id END
+			JOIN memory_facts mf ON neighbor.name = ANY(mf.entities) AND mf.organization_id = $2
+			JOIN chunks c ON c.id = mf.source_chunk_id AND c.confidence <> 'archived' AND c.searchable_status = 'searchable'
+			WHERE gn.organization_id = $2 AND gn.name = ANY($1::text[])
+			ORDER BY ge.weight DESC
+			LIMIT 20`, entities, orgID)
+		if err != nil {
+			graphCh <- signalResult{err: err}
+			return
+		}
+		defer rows.Close()
+		var candidates []candidate
+		for rows.Next() {
+			var c candidate
+			if err := rows.Scan(&c.ID, &c.Title, &c.Summary, &c.Content, &c.TokenCount,
+				&c.QualityScore, &c.UsageCount, &c.Confidence, &c.Repository, &c.CreatedAt, &c.Scores.GraphRelevance); err != nil {
+				continue
+			}
+			candidates = append(candidates, c)
+		}
+		graphCh <- signalResult{candidates: candidates}
+	}()
+
 	wg.Wait()
 
 	// 3. Collect results
 	sem := <-semanticCh
 	kw := <-keywordCh
 	ent := <-entityCh
+	graph := <-graphCh
 
 	if sem.err != nil {
 		slog.Warn("Semantic search failed", "error", sem.err)
@@ -176,9 +217,12 @@ func (e *Engine) Search(ctx context.Context, req *models.SearchRequest, claims *
 	if kw.err != nil {
 		slog.Warn("Keyword search failed", "error", kw.err)
 	}
+	if graph.err != nil {
+		slog.Warn("Graph search failed", "error", graph.err)
+	}
 
 	// 4. RRF Fusion
-	fused := rrfFuse(sem.candidates, kw.candidates, ent.candidates)
+	fused := rrfFuse(sem.candidates, kw.candidates, ent.candidates, graph.candidates)
 
 	// 5. Composite ranking
 	queryRepo := ""
