@@ -168,3 +168,43 @@ func (l *loginLimiter) Allow(key string) bool {
 	l.entries[key] = entry
 	return true
 }
+
+// ─── OIDC Handlers ───────────────────────────────────────────────────────────
+
+func handleOIDCLogin(app *App) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if app.OIDC == nil {
+			writeError(w, http.StatusNotFound, "OIDC_DISABLED", "OIDC is not configured")
+			return
+		}
+		// Use a simple state parameter (in production, use a signed/stored nonce)
+		state := "synapse-oidc"
+		http.Redirect(w, r, app.OIDC.AuthorizeURL(state), http.StatusFound)
+	}
+}
+
+func handleOIDCCallback(app *App) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if app.OIDC == nil {
+			writeError(w, http.StatusNotFound, "OIDC_DISABLED", "OIDC is not configured")
+			return
+		}
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing authorization code")
+			return
+		}
+
+		tokens, err := app.OIDC.Exchange(r.Context(), code, "default", auth.ClientMetadata{
+			UserAgent: r.UserAgent(), IPAddress: requestIP(r),
+		})
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "OIDC_ERROR", "OIDC authentication failed")
+			return
+		}
+
+		setRefreshCookie(w, app, tokens.RefreshToken)
+		// Redirect to the dashboard; the Flutter app will read the access token from a subsequent refresh call
+		http.Redirect(w, r, "/?oidc=success", http.StatusFound)
+	}
+}

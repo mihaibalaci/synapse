@@ -4,6 +4,21 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-01
+
+### Added
+- Real user CRUD: list, create (with bcrypt password), update (display name, roles, disable, password reset), and delete with organization scoping.
+- Last-admin lockout prevention: cannot disable, demote, or delete the only remaining admin.
+- Session revocation on user disable or password change.
+- Optional OIDC authentication: configure `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_REDIRECT_URI` to enable external identity provider login.
+- OIDC auto-provisions new users with `viewer` role on first login.
+- OIDC discovery via `.well-known/openid-configuration`.
+- New routes: `GET /api/v1/auth/oidc/login` (redirect) and `GET /api/v1/auth/oidc/callback`.
+
+### Changed
+- Admin user endpoints now persist to `auth_users` table (previously returned empty stubs).
+- Duplicate email within an organization returns `409 Conflict`.
+
 ## [0.4.0] - 2026-08-01
 
 ### Added
@@ -75,6 +90,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - PostgreSQL schema, Redis queue, S3 raw storage.
 - Basic JWT validation middleware.
 
+[0.5.0]: https://github.com/mihaibalaci/synapse/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mihaibalaci/synapse/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mihaibalaci/synapse/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mihaibalaci/synapse/compare/v0.1.0...v0.2.0

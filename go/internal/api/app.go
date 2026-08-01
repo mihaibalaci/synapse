@@ -24,6 +24,7 @@ type App struct {
 	Stats    *storage.StatsRepo
 	Settings *storage.SettingsRepo
 	Auth     *auth.Service
+	OIDC     *auth.OIDCProvider
 
 	// Embedder generates vectors for chunk content and search queries.
 	Embedder *ingestion.EmbeddingClient
@@ -64,6 +65,20 @@ func NewApp(ctx context.Context, cfg *config.Config) (*App, error) {
 		Settings: storage.NewSettingsRepo(db),
 		Auth:     auth.NewService(db, cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.AuthAccessTTL, cfg.AuthRefreshTTL),
 		Embedder: ingestion.NewEmbeddingClient(),
+	}
+
+	// Initialize optional OIDC provider
+	oidcCfg := auth.OIDCConfig{
+		Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID,
+		ClientSecret: cfg.OIDCClientSecret, RedirectURI: cfg.OIDCRedirectURI,
+	}
+	if oidcCfg.Enabled() {
+		oidc, err := auth.NewOIDCProvider(oidcCfg, app.Auth, db)
+		if err != nil {
+			slog.Warn("OIDC provider initialization failed; OIDC login disabled", "error", err)
+		} else {
+			app.OIDC = oidc
+		}
 	}
 
 	slog.Info("Embedding provider configured",

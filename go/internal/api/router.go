@@ -61,6 +61,8 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 	r.Post("/api/v1/auth/login", handleAuthLogin(app, loginAttempts))
 	r.Post("/api/v1/auth/refresh", handleAuthRefresh(app))
 	r.Post("/api/v1/auth/logout", handleAuthLogout(app))
+	r.Get("/api/v1/auth/oidc/login", handleOIDCLogin(app))
+	r.Get("/api/v1/auth/oidc/callback", handleOIDCCallback(app))
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
@@ -657,33 +659,6 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 			"retrieval": metricValue(&metrics.retrievalErrors),
 			"ingestion": metricValue(&metrics.ingestionErrors),
 			"storage":   metricValue(&metrics.storageErrors),
-		},
-	})
-}
-
-func handleListUsers(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"users": []any{}, "total": 0})
-}
-
-func handleCreateUser(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]any{"id": "", "created": true})
-}
-
-func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"updated": true})
-}
-
-func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
-}
-
-func handleListRoles(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"roles": []map[string]string{
-			{"id": "admin", "label": "Admin", "description": "Full system access"},
-			{"id": "team_lead", "label": "Team Lead", "description": "Team data access"},
-			{"id": "developer", "label": "Developer", "description": "Capture, search, own data"},
-			{"id": "viewer", "label": "Viewer", "description": "Read-only access"},
 		},
 	})
 }

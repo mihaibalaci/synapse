@@ -34,6 +34,12 @@ type Config struct {
 	AuthRefreshTTL   time.Duration
 	AuthCookieSecure bool
 
+	// OIDC (optional)
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCRedirectURI  string
+
 	// Embedding
 	EmbeddingProvider   string
 	EmbeddingModel      string
@@ -72,6 +78,11 @@ func Load() *Config {
 		AuthAccessTTL:    time.Duration(envInt("AUTH_ACCESS_TTL_MINUTES", 15)) * time.Minute,
 		AuthRefreshTTL:   time.Duration(envInt("AUTH_REFRESH_TTL_DAYS", 7)) * 24 * time.Hour,
 		AuthCookieSecure: envBool("AUTH_COOKIE_SECURE", true),
+
+		OIDCIssuer:       env("OIDC_ISSUER", ""),
+		OIDCClientID:     env("OIDC_CLIENT_ID", ""),
+		OIDCClientSecret: env("OIDC_CLIENT_SECRET", ""),
+		OIDCRedirectURI:  env("OIDC_REDIRECT_URI", ""),
 
 		EmbeddingProvider:   env("EMBEDDING_PROVIDER", "local"),
 		EmbeddingModel:      env("EMBEDDING_MODEL", "nomic-embed-text"),
