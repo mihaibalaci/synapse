@@ -1,106 +1,107 @@
 # <img src="docs/assets/logo.svg" width="36" height="36" align="top" /> Synapse
 
-Synapse is a self-hosted memory service for AI-assisted engineering sessions. The primary runtime is one Go binary, with a Flutter administration UI and optional Rust compute experiments.
+**The memory layer that learns.** A self-hosted knowledge system that captures AI engineering sessions, extracts atomic facts, builds a knowledge graph, detects contradictions, and provides sub-200ms 4-signal retrieval that improves with every interaction.
 
-## What works today
+## What Synapse Does
 
-- Authenticated passive/active session capture with raw payload persistence to S3/MinIO before acceptance.
-- PostgreSQL storage for sessions, chunks, 768-dimensional embeddings, full-text search, and atomic facts.
-- Redis-backed ingestion queue, bounded retries, dead-letter parking, stranded-session recovery, response cache, and rate limiting.
-- Three-signal retrieval: pgvector similarity, PostgreSQL full-text search, and fact/entity overlap; RRF fusion and token-budget packing.
-- MCP and CLI clients in the Go binary.
-- Admin metrics and LLM provider configuration.
-- Embedded, checksummed SQL migrations (`synapse migrate`).
-
-Deduplication, graph enrichment, structured knowledge extraction, reflect/write-back, observations, user management, and compaction are currently stubs or schema placeholders. They are not represented as working features in the operational docs.
+| Capability | How |
+|-----------|-----|
+| **Capture** | Passive/active sessions, git PRs/commits, Slack, MCP, SDKs |
+| **Extract** | Heuristic fact extraction → typed entities (decision, lesson, pattern, constraint, opinion) |
+| **Graph** | Auto-populated knowledge graph with co-occurrence edges and importance scoring |
+| **Search** | 4-signal hybrid: semantic (pgvector), keyword (FTS), entity overlap, graph neighbors |
+| **Learn** | LLM-powered reflection, confidence calibration, contradiction detection, adaptive ranking |
+| **Compact** | Automatic session summarization via LLM, cross-session deduplication |
+| **Observe** | Prometheus `/metrics`, structured audit log, queue visibility, S3 garbage collection |
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  C[IDE / MCP / CLI / Admin UI] -->|JWT HTTP| A[Go API]
-  A -->|raw PUT| S3[(S3 / MinIO)]
-  A -->|session metadata| PG[(PostgreSQL + pgvector)]
-  A -->|job + cache| R[(Redis)]
-  R --> W[Go worker]
-  W -->|raw GET| S3
-  W --> E[Embedding provider]
-  W -->|chunks, facts, index| PG
-  A -->|three-signal search| PG
+Single Go binary + Flutter admin UI + optional Rust compute kernels.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         CAPTURE LAYER                                │
+│  MCP │ Python SDK │ JS SDK │ CLI │ Git │ Slack │ REST API           │
+└──────┬──────────────────────────────────────────────────────────────┘
+       │
+┌──────▼──────────────────────────────────────────────────────────────┐
+│                         API SERVER (Go)                              │
+│  Auth (Login/OIDC/API Keys) │ Rate Limiting │ Webhooks              │
+│  Search (4-signal) │ Reflect │ Admin │ Prometheus                   │
+└──────┬──────────────────────────────────────────────────────────────┘
+       │
+┌──────▼──────────────────────────────────────────────────────────────┐
+│                         WORKER                                       │
+│  Segment → Embed → Facts → Dedup → Graph → Contradictions → Index  │
+│  Auto-compaction │ Confidence calibration │ Reaper recovery          │
+└──────┬──────────────────────────────────────────────────────────────┘
+       │
+┌──────▼──────────────────────────────────────────────────────────────┐
+│  PostgreSQL 16       │  Redis 7          │  S3/MinIO                │
+│  pgvector + FTS      │  Queues + Cache   │  Raw Objects             │
+│  Knowledge Graph     │  Rate State       │  Session Payloads        │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for exact flows and failure behavior.
-
-## Install
-
-The native installer can provision or connect each dependency independently:
+## Quick Start
 
 ```bash
-cp deploy/install.env.example /root/synapse-install.env
-chmod 600 /root/synapse-install.env
-sudo deploy/install.sh --interactive
-# or fully config-driven
-sudo deploy/install.sh --config /root/synapse-install.env
-# or provision one resource at a time
-sudo deploy/install.sh --config /root/synapse-install.env --component postgres
-sudo deploy/install.sh --config /root/synapse-install.env --component s3
+# Docker Compose (includes all dependencies)
+docker compose -f infra/docker/docker-compose.yml up --build
+
+# Bootstrap admin
+docker compose exec api env AUTH_BOOTSTRAP_EMAIL=admin@synapse.local \
+  AUTH_BOOTSTRAP_PASSWORD=ChangeMeNow123 /usr/local/bin/synapse auth-bootstrap
+
+# Open UI
+open http://localhost:8080
 ```
 
-Every component supports `install`, `external`, or `skip`: PostgreSQL, Redis, S3/MinIO, embedding/Ollama, synthesis LLM, API, worker, Flutter UI, and nginx. Read [docs/INSTALLATION.md](docs/INSTALLATION.md) before using it on a server.
+See [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) for native installation.
 
-## Build and verify
+## Client SDKs
 
-```bash
-cd go
-go build ./...
-go vet ./...
-go test ./...
-
-cd ../packages/retrieval-engine
-cargo test
-
-cd ../admin-ui
-flutter analyze
-flutter test
-flutter build web
+```python
+# Python
+from synapse_sdk import SynapseClient, SessionTracker
+client = SynapseClient(token="sk_synapse_...")
+results = client.search("How does our auth work?")
 ```
 
-## Runtime commands
-
-```text
-synapse migrate          apply embedded schema migrations
-synapse serve            run HTTP API
-synapse worker           run ingestion workers and recovery reaper
-synapse mcp              run MCP over stdin/stdout
-synapse embed-backfill   regenerate missing chunk embeddings
-synapse verify-storage   compare session pointers with object storage
+```javascript
+// JavaScript (Node 18+)
+const { SynapseClient } = require('@synapse/sdk');
+const client = new SynapseClient({ token: 'sk_synapse_...' });
+const results = await client.search('Redis caching strategy');
 ```
 
-## MCP
+## MCP Tools (11 tools)
 
-```json
-{
-  "mcpServers": {
-    "synapse": {
-      "command": "/usr/local/bin/synapse",
-      "args": ["mcp"],
-      "env": {
-        "SYNAPSE_API_URL": "https://synapse.example.com",
-        "SYNAPSE_TOKEN_FILE": "/path/to/mode-0600-token"
-      }
-    }
-  }
-}
-```
+`search_knowledge` · `get_context` · `get_facts` · `get_fact_history` · `reflect_on_knowledge` · `save_session` · `save_insight` · `capture_git` · `graph_entity` · `graph_path` · `feedback`
+
+## Admin Panel
+
+The Flutter web UI provides: Dashboard, Users & Roles, System Health, Activity Metrics, Configuration (LLM), Memory Browser, Knowledge Search, Graph Explorer, API Keys, Operations (queues/audit/backup), and an Onboarding Wizard.
+
+## Key Design Decisions
+
+- **Embedded migrations** with advisory locking and checksums — schema is always reproducible
+- **Request-context DI** — no mutable globals, testable handlers
+- **Rotating refresh sessions** — HttpOnly cookies with replay revocation
+- **Team/repo isolation** — enforced in SQL, not just UI
+- **Temporal decay** — 30-day half-life keeps recent knowledge prominent
+- **Contradiction detection** — cosine >0.85 + identical entities auto-supersedes
 
 ## Documentation
 
-- [Installation](docs/INSTALLATION.md)
+- [API Reference](docs/API.md)
 - [Architecture](ARCHITECTURE.md)
-- [Data flow](docs/DATA-FLOW.md)
-- [API](docs/API.md)
+- [Installation](docs/INSTALLATION.md)
+- [Getting Started](docs/GETTING-STARTED.md)
 - [Deployment](docs/DEPLOYMENT.md)
-- [Operations](docs/RUNBOOK.md)
-- [IDE/MCP setup](docs/IDE-SETUP.md)
+- [Data Flow Diagrams](docs/diagrams/README.md)
+- [Changelog](CHANGELOG.md)
 
-License: [MIT](LICENSE).
+## Version
+
+**v1.0.0** — See [CHANGELOG.md](CHANGELOG.md) for full history.

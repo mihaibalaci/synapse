@@ -155,6 +155,59 @@ var tools = []ToolDef{
 			"required": []string{"content", "type"},
 		},
 	},
+	{
+		Name:        "capture_git",
+		Description: "Capture a git commit, PR, or code review into the knowledge base. Extracts decisions and patterns from diffs and comments.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"type":       map[string]string{"type": "string", "description": "commit, pr, diff, or review"},
+				"repository": map[string]string{"type": "string", "description": "Repository (org/name)"},
+				"title":      map[string]string{"type": "string", "description": "Commit message or PR title"},
+				"body":       map[string]string{"type": "string", "description": "PR description or commit body"},
+				"diff":       map[string]string{"type": "string", "description": "Unified diff content"},
+				"branch":     map[string]string{"type": "string", "description": "Branch name"},
+				"commitSha":  map[string]string{"type": "string", "description": "Commit SHA"},
+			},
+			"required": []string{"type", "repository"},
+		},
+	},
+	{
+		Name:        "graph_entity",
+		Description: "Explore the knowledge graph around an entity. Shows related concepts and how strongly they connect.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"entity": map[string]string{"type": "string", "description": "Entity name to explore"},
+			},
+			"required": []string{"entity"},
+		},
+	},
+	{
+		Name:        "graph_path",
+		Description: "Find how two entities are connected through the knowledge graph (up to 4 hops).",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"from": map[string]string{"type": "string", "description": "Starting entity"},
+				"to":   map[string]string{"type": "string", "description": "Target entity"},
+			},
+			"required": []string{"from", "to"},
+		},
+	},
+	{
+		Name:        "feedback",
+		Description: "Provide feedback on a search result to improve future ranking. Positive (1) boosts, negative (-1) weakens.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"resultId": map[string]string{"type": "string", "description": "The chunk/fact ID to give feedback on"},
+				"score":    map[string]any{"type": "number", "description": "1 for good, -1 for bad"},
+				"query":    map[string]string{"type": "string", "description": "The original query"},
+			},
+			"required": []string{"resultId", "score"},
+		},
+	},
 }
 
 // ─── Server ──────────────────────────────────────────────────────────────────
@@ -248,6 +301,14 @@ func (s *Server) callTool(name string, args map[string]any) map[string]any {
 		return s.toolSaveSession(ctx, args)
 	case "save_insight":
 		return s.toolSaveInsight(ctx, args)
+	case "capture_git":
+		return s.toolCaptureGit(ctx, args)
+	case "graph_entity":
+		return s.toolGraphEntity(ctx, args)
+	case "graph_path":
+		return s.toolGraphPath(ctx, args)
+	case "feedback":
+		return s.toolFeedback(ctx, args)
 	default:
 		return errorResult(fmt.Sprintf("Unknown tool: %s", name))
 	}
@@ -431,52 +492,36 @@ func (s *Server) toolFactHistory(ctx context.Context, args map[string]any) map[s
 	return textResult(b.String())
 }
 
-// toolReflect asks the API to synthesise an answer. The server-side reflect
-// endpoint needs an LLM and is not implemented yet, so rather than fabricate a
-// synthesis this falls back to the raw supporting memories and says plainly
-// that no synthesis happened.
+// toolReflect uses the LLM-powered reflect endpoint to synthesize answers.
 func (s *Server) toolReflect(ctx context.Context, args map[string]any) map[string]any {
 	query := argString(args, "query")
 	if query == "" {
 		return errorResult("query is required")
 	}
 
-	body := map[string]any{"query": query, "maxTokens": argInt(args, "maxTokens", 6000)}
-	if focus := argString(args, "entityFocus"); focus != "" {
-		body["entityFocus"] = focus
-	}
+	body := map[string]any{"query": query, "writeBack": false, "maxFacts": 3}
 
 	var resp struct {
-		Answer     string `json:"answer"`
-		Confidence string `json:"confidence"`
-		Reasoning  string `json:"reasoning"`
-		Sources    []struct {
-			Title string `json:"title"`
-		} `json:"sources"`
+		Answer     string   `json:"answer"`
+		Confidence string   `json:"confidence"`
+		Reasoning  string   `json:"reasoning"`
+		Sources    []string `json:"sources"`
+		Insights   []struct {
+			Content string `json:"content"`
+			Type    string `json:"type"`
+		} `json:"insights"`
 	}
 	if err := s.apiCall(ctx, http.MethodPost, "/api/v1/reflect", body, &resp); err != nil {
 		return errorResult(fmt.Sprintf("Reflect failed: %v", err))
 	}
 
-	if resp.Answer == "" || strings.Contains(strings.ToLower(resp.Answer), "not yet implemented") {
-		note := "Reflect synthesis is not available on this server yet (it requires an LLM). " +
-			"Returning the raw supporting memories instead:\n\n"
-		fallback := s.toolSearch(ctx, map[string]any{"query": query, "maxResults": 8})
-		if items, ok := fallback["content"].([]map[string]any); ok && len(items) > 0 {
-			if existing, ok := items[0]["text"].(string); ok {
-				return textResult(note + existing)
-			}
-		}
-		return textResult(note + "No supporting memories found.")
-	}
-
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\nconfidence: %s\n", resp.Answer, resp.Confidence)
+	fmt.Fprintf(&b, "%s\n\nConfidence: %s\n", resp.Answer, resp.Confidence)
 	if resp.Reasoning != "" {
-		fmt.Fprintf(&b, "reasoning: %s\n", resp.Reasoning)
+		fmt.Fprintf(&b, "Reasoning: %s\n", resp.Reasoning)
 	}
-	for _, src := range resp.Sources {
-		fmt.Fprintf(&b, "- source: %s\n", src.Title)
+	if len(resp.Sources) > 0 {
+		fmt.Fprintf(&b, "Sources: %d chunks referenced\n", len(resp.Sources))
 	}
 	return textResult(b.String())
 }
@@ -553,6 +598,109 @@ func (s *Server) toolSaveInsight(ctx context.Context, args map[string]any) map[s
 
 	return textResult(fmt.Sprintf("Insight saved as a %q fact.\nid: %s\ncontent: %s",
 		factType, resp.Fact.ID, content))
+}
+
+func (s *Server) toolCaptureGit(ctx context.Context, args map[string]any) map[string]any {
+	gitType := argString(args, "type")
+	repo := argString(args, "repository")
+	if gitType == "" || repo == "" {
+		return errorResult("type and repository are required")
+	}
+
+	body := map[string]any{
+		"type":       gitType,
+		"repository": repo,
+		"title":      argString(args, "title"),
+		"body":       argString(args, "body"),
+		"diff":       argString(args, "diff"),
+		"branch":     argString(args, "branch"),
+		"commitSha":  argString(args, "commitSha"),
+	}
+
+	var resp struct {
+		SessionID string `json:"sessionId"`
+		Type      string `json:"type"`
+	}
+	if err := s.apiCall(ctx, http.MethodPost, "/api/v1/capture/git", body, &resp); err != nil {
+		return errorResult(fmt.Sprintf("Git capture failed: %v", err))
+	}
+	return textResult(fmt.Sprintf("Git %s captured.\nsessionId: %s\nrepository: %s", gitType, resp.SessionID, repo))
+}
+
+func (s *Server) toolGraphEntity(ctx context.Context, args map[string]any) map[string]any {
+	entity := argString(args, "entity")
+	if entity == "" {
+		return errorResult("entity is required")
+	}
+
+	var resp struct {
+		Entity string `json:"entity"`
+		Edges  []struct {
+			Neighbor string  `json:"neighbor"`
+			Relation string  `json:"relation"`
+			Weight   float64 `json:"weight"`
+		} `json:"edges"`
+		Count int `json:"count"`
+	}
+	path := "/api/v1/admin/graph/entity/" + url.PathEscape(entity)
+	if err := s.apiCall(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return errorResult(fmt.Sprintf("Graph query failed: %v", err))
+	}
+	if resp.Count == 0 {
+		return textResult(fmt.Sprintf("Entity %q has no connections in the knowledge graph.", entity))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Knowledge graph for %q (%d connections):\n\n", entity, resp.Count)
+	for _, e := range resp.Edges {
+		fmt.Fprintf(&b, "  → %s (%s, weight: %.0f)\n", e.Neighbor, e.Relation, e.Weight)
+	}
+	return textResult(b.String())
+}
+
+func (s *Server) toolGraphPath(ctx context.Context, args map[string]any) map[string]any {
+	from := argString(args, "from")
+	to := argString(args, "to")
+	if from == "" || to == "" {
+		return errorResult("from and to are required")
+	}
+
+	var resp struct {
+		Paths [][]string `json:"paths"`
+		Count int        `json:"count"`
+	}
+	path := "/api/v1/admin/graph/path?from=" + url.QueryEscape(from) + "&to=" + url.QueryEscape(to)
+	if err := s.apiCall(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return errorResult(fmt.Sprintf("Path query failed: %v", err))
+	}
+	if resp.Count == 0 {
+		return textResult(fmt.Sprintf("No path found between %q and %q (within 4 hops).", from, to))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Paths from %q to %q:\n", from, to)
+	for i, p := range resp.Paths {
+		fmt.Fprintf(&b, "  %d. %s\n", i+1, strings.Join(p, " → "))
+	}
+	return textResult(b.String())
+}
+
+func (s *Server) toolFeedback(ctx context.Context, args map[string]any) map[string]any {
+	resultID := argString(args, "resultId")
+	score := argInt(args, "score", 0)
+	if resultID == "" {
+		return errorResult("resultId is required")
+	}
+	body := map[string]any{"resultId": resultID, "score": score, "query": argString(args, "query")}
+	var resp struct {
+		Received bool `json:"received"`
+	}
+	if err := s.apiCall(ctx, http.MethodPost, "/api/v1/feedback", body, &resp); err != nil {
+		return errorResult(fmt.Sprintf("Feedback failed: %v", err))
+	}
+	direction := "positive"
+	if score < 0 {
+		direction = "negative"
+	}
+	return textResult(fmt.Sprintf("Feedback recorded (%s) for result %s.", direction, resultID))
 }
 
 // ─── HTTP plumbing ───────────────────────────────────────────────────────────

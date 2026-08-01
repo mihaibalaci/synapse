@@ -1,8 +1,52 @@
-flowchart LR
-  H[Helm compaction CronJob] -->|disabled by default| C[synapse compact]
-  C --> N[Logs start/complete only]
-  N --> X[No database compaction performed]
+flowchart TD
+    subgraph Trigger["Trigger"]
+        TIMER[Worker Timer<br/>Every 6 hours]
+        CLI_CMD[synapse compact<br/>Manual]
+        CRON[Kubernetes CronJob]
+    end
 
-  P[Planned, not implemented] -.-> S[cluster synthesis]
-  P -.-> F[fact supersession]
-  P -.-> A[stale archival]
+    subgraph Selection["Candidate Selection"]
+        FIND[Find sessions >14 days old]
+        FILTER[Filter: ≥3 active chunks<br/>No existing summary]
+    end
+
+    subgraph Summarization["LLM Summarization"]
+        BUILD[Build prompt from chunks<br/>Max 12K chars]
+        CALL_LLM[Call LLM<br/>Ollama/OpenAI/Anthropic]
+        VALIDATE[Validate non-empty summary]
+    end
+
+    subgraph Persistence["Atomic Persistence"]
+        EMBED_SUM[Embed summary (768d)]
+        INSERT[INSERT summary chunk<br/>type=summary, confidence=high]
+        ARCHIVE[UPDATE original chunks<br/>confidence=archived]
+        TX[PostgreSQL Transaction]
+    end
+
+    subgraph Contradiction["Contradiction Scan"]
+        SCAN[Recent facts (7 days)]
+        COSINE[Embedding cosine >0.85]
+        ENTITY_EQ[Identical entity sets]
+        SUPERSEDE[Mark older fact superseded]
+    end
+
+    subgraph Confidence["Confidence Calibration"]
+        DECAY[Fact decay: 90-day half-life]
+        BOOST[Chunk boost: high usage]
+        WEAKEN[Chunk decay: zero usage >60d]
+    end
+
+    TIMER --> FIND
+    CLI_CMD --> FIND
+    CRON --> FIND
+    FIND --> FILTER --> BUILD --> CALL_LLM --> VALIDATE
+    VALIDATE --> EMBED_SUM --> TX
+    TX --> INSERT
+    TX --> ARCHIVE
+
+    TIMER --> SCAN
+    SCAN --> COSINE --> ENTITY_EQ --> SUPERSEDE
+
+    TIMER --> DECAY
+    TIMER --> BOOST
+    TIMER --> WEAKEN

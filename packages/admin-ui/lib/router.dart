@@ -3,8 +3,11 @@ import 'package:go_router/go_router.dart';
 
 import 'pages/dashboard/dashboard_page.dart';
 import 'pages/login/login_page.dart';
+import 'pages/graph/graph_page.dart';
+import 'pages/keys/keys_page.dart';
 import 'pages/memory/memory_page.dart';
 import 'pages/onboarding/onboarding_page.dart';
+import 'pages/operations/operations_page.dart';
 import 'pages/search/search_page.dart';
 import 'pages/users/users_page.dart';
 import 'pages/system/system_page.dart';
@@ -74,6 +77,21 @@ GoRouter buildRouter(AuthService auth) {
             path: '/search',
             pageBuilder: (context, state) =>
                 const NoTransitionPage(child: SearchPage()),
+          ),
+          GoRoute(
+            path: '/graph',
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: GraphPage()),
+          ),
+          GoRoute(
+            path: '/keys',
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: ApiKeysPage()),
+          ),
+          GoRoute(
+            path: '/operations',
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: OperationsPage()),
           ),
         ],
       ),

@@ -1,21 +1,29 @@
 stateDiagram-v2
-  [*] --> processing_pending: capture persisted
-  processing_pending --> queued: LPUSH succeeds
-  processing_pending --> recovery_wait: LPUSH fails or worker crashes
-  queued --> processing: worker BRPOP
-  recovery_wait --> queued: reaper after queue drains and age > 10m
-  processing --> indexed_searchable: chunks and index stored
-  processing --> retry_wait: stage error or timeout
-  retry_wait --> queued: attempts 1-3 after 2/4/8s
-  retry_wait --> failed_dead_letter: attempt 4
+    [*] --> processing: Capture accepted
+    processing --> searchable: Worker pipeline complete
+    processing --> failed: Fatal error (after retries)
+    processing --> processing: Reaper recovery
 
-  note right of indexed_searchable
-    sessions.status = indexed
-    searchable_status = searchable
-    enrichment_status currently remains pending
-  end note
+    state searchable {
+        [*] --> active
+        active --> compacted: Auto-compaction (>14 days)
+        active --> archived: Manual archive / dedup
+        compacted --> archived: Further compaction
+    }
 
-  note right of failed_dead_letter
-    job is in synapse:dead
-    sessions.status = failed
-  end note
+    failed --> processing: Dead-letter retry
+
+    state FactLifecycle {
+        [*] --> valid
+        valid --> superseded: Contradiction detected
+        valid --> superseded: Manual supersession
+        valid --> decayed: Confidence <0.3 (unused)
+    }
+
+    state UserSession {
+        [*] --> authenticated: Login / Refresh
+        authenticated --> expired: Access token TTL (15 min)
+        expired --> authenticated: Refresh rotation
+        authenticated --> revoked: Logout / Disable / Replay
+        revoked --> [*]
+    }

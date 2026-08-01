@@ -1,28 +1,36 @@
 sequenceDiagram
-  autonumber
-  participant C as Client
-  participant A as Go API
-  participant R as Redis
-  participant E as Embedding provider
-  participant P as PostgreSQL
+    participant C as Client
+    participant A as API Server
+    participant R as Redis (Cache)
+    participant PG as PostgreSQL
+    participant E as Embedding Provider
 
-  C->>A: POST /search or /context + JWT
-  A->>R: GET search:hash(full request + auth)
-  alt cache hit
-    R-->>A: JSON response
-    A-->>C: cached=true
-  else cache miss
-    par semantic signal
-      A->>E: embed query
-      A->>P: pgvector cosine top 50
-    and keyword signal
-      A->>P: PostgreSQL FTS top 50
-    and entity signal
-      A->>P: facts by entity overlap
+    C->>A: POST /search {query, topK, context}
+    A->>A: Validate JWT + enforce team/repo access
+    A->>R: Check cache (full request + auth key)
+    alt Cache hit
+        R-->>A: Cached response
+        A-->>C: 200 {results, cached: true}
+    else Cache miss
+        par Signal 1: Semantic
+            A->>E: Embed query (768d)
+            E-->>A: Query vector
+            A->>PG: ANN search (pgvector <=>)
+        and Signal 2: Keyword
+            A->>PG: ts_rank full-text search
+        and Signal 3: Entity
+            A->>PG: Fact entity overlap
+        and Signal 4: Graph
+            A->>PG: Graph neighbor traversal
+        end
+        A->>A: RRF fusion (4 signals)
+        A->>A: Composite ranking<br/>(temporal decay 30d, usage, graph, quality, repo, confidence)
+        A->>A: Diversity + token budget packing
+        A->>R: Cache response (5 min TTL)
+        A-->>C: 200 {results, latencyMs, totalCount}
     end
-    Note over A,P: semantic failure is skipped; org_id scopes all queries
-    A->>A: RRF fusion + ranking + diversity
-    A->>A: token budget or top-K
-    A->>R: SET TTL 5m + ZINCRBY popular query
-    A-->>C: results
-  end
+
+    Note over C,A: Feedback loop
+    C->>A: POST /feedback {resultId, score}
+    A->>PG: Update chunk quality / fact confidence
+    A->>A: Adjust adaptive signal weights

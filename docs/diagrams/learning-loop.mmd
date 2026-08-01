@@ -1,12 +1,76 @@
-flowchart LR
-  C[Implemented capture] --> I[Implemented heuristic facts/index]
-  I --> R[Implemented three-signal retrieval]
-  R --> REF[Reflect endpoint placeholder]
-  REF -. planned .-> WB[Insight write-back]
-  WB -. planned .-> C
-  I -. planned .-> D[Dedup + graph + observations]
-  D -. planned .-> R
+flowchart TD
+    subgraph Input["Knowledge Input"]
+        CAPTURE[Session Capture]
+        GIT_IN[Git PR/Commit]
+        MANUAL[Manual Fact Creation]
+        REFLECT_IN[Reflect Write-back]
+    end
 
-  style REF stroke-dasharray: 5 5
-  style WB stroke-dasharray: 5 5
-  style D stroke-dasharray: 5 5
+    subgraph Extraction["Fact Extraction"]
+        HEURISTIC[Heuristic Patterns<br/>decisions, lessons, constraints]
+        EMBED_F[Embed Facts (768d)]
+        ENTITY[Entity Extraction]
+    end
+
+    subgraph Graph["Knowledge Graph"]
+        NODES[graph_nodes<br/>Entity registry]
+        EDGES[graph_edges<br/>Weighted co-occurrence]
+        IMPORTANCE[Entity importance<br/>Total edge weight]
+    end
+
+    subgraph Quality["Quality Signals"]
+        FEEDBACK[User Feedback<br/>+1 boost / -1 weaken]
+        ADAPTIVE[Adaptive Weights<br/>Per-org signal tuning]
+        DECAY[Temporal Decay<br/>30-day half-life ranking]
+        CONF[Confidence Calibration<br/>90-day fact decay]
+        USAGE[Usage Tracking<br/>last_accessed + count]
+    end
+
+    subgraph Retrieval["4-Signal Retrieval"]
+        SEM[Semantic ANN]
+        KW[Keyword FTS]
+        ENT[Entity Overlap]
+        GR[Graph Neighbors]
+        RRF[RRF Fusion]
+        RANK[Composite Ranking]
+    end
+
+    subgraph Output["Knowledge Output"]
+        SEARCH_R[Search Results]
+        CONTEXT_R[AI Context]
+        REFLECT_R[Reflect Synthesis]
+        MCP_OUT[MCP Tool Responses]
+        WEBHOOK_OUT[Webhook Events]
+    end
+
+    %% Input to extraction
+    CAPTURE --> HEURISTIC
+    GIT_IN --> HEURISTIC
+    MANUAL --> EMBED_F
+    REFLECT_IN --> EMBED_F
+
+    HEURISTIC --> EMBED_F --> ENTITY
+    ENTITY --> NODES
+    ENTITY --> EDGES
+
+    %% Quality feedback
+    FEEDBACK --> ADAPTIVE
+    FEEDBACK --> USAGE
+    DECAY --> RANK
+    CONF --> RANK
+    USAGE --> RANK
+    ADAPTIVE --> RANK
+
+    %% Retrieval
+    SEM --> RRF
+    KW --> RRF
+    ENT --> RRF
+    GR --> RRF
+    RRF --> RANK
+
+    %% Output
+    RANK --> SEARCH_R
+    RANK --> CONTEXT_R
+    RANK --> REFLECT_R
+    RANK --> MCP_OUT
+    HEURISTIC -.-> WEBHOOK_OUT

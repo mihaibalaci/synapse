@@ -1,28 +1,82 @@
-flowchart LR
-  subgraph Clients
-    IDE[IDE / MCP]
-    CLI[CLI]
-    UI[Flutter admin UI]
-  end
-  N[nginx optional]
-  A[Go API: synapse serve]
-  W[Go worker: synapse worker]
-  M[Migration job: synapse migrate]
-  PG[(PostgreSQL + pgvector/FTS)]
-  R[(Redis queues/cache/dead letters)]
-  O[(S3 / MinIO raw sessions)]
-  E[768d embedding provider]
-  L[LLM provider settings/test only]
+flowchart TD
+    subgraph Capture["Capture Layer"]
+        MCP[MCP Server]
+        SDK_PY[Python SDK]
+        SDK_JS[JavaScript SDK]
+        CLI[CLI]
+        GIT[Git Webhooks]
+        SLACK[Slack Bot]
+    end
 
-  IDE -->|JWT| A
-  CLI -->|JWT| A
-  UI --> N -->|JWT| A
-  A -->|metadata/search/settings| PG
-  A -->|LPUSH + cache| R
-  A -->|raw PUT| O
-  R -->|BRPOP| W
-  W -->|raw GET| O
-  W -->|batch embed| E
-  W -->|chunks/facts/index/status| PG
-  M -->|checksummed migrations| PG
-  A -.->|admin test/model list| L
+    subgraph API["API Server (Go)"]
+        AUTH[Auth Module<br/>Login/Refresh/OIDC]
+        RATE[Rate Limiter<br/>Per-role tiers]
+        CAP[Capture Handler]
+        GIT_CAP[Git Capture Handler]
+        SEARCH[Search Engine<br/>4-signal hybrid]
+        REFLECT[Reflect/Learning Loop]
+        FACTS[Facts API]
+        ADMIN[Admin Routes]
+        METRICS[/metrics Prometheus]
+        WEBHOOKS[Webhook Emitter]
+    end
+
+    subgraph Storage["Storage Layer"]
+        PG[(PostgreSQL 16<br/>pgvector + FTS)]
+        REDIS[(Redis 7<br/>Queues + Cache)]
+        S3[(S3/MinIO<br/>Raw Objects)]
+    end
+
+    subgraph Worker["Worker Process"]
+        INGEST[Ingestion Pipeline]
+        SEG[Segment]
+        EMBED[Embed 768d]
+        EXTRACT[Extract Facts]
+        DEDUP[Cross-session Dedup]
+        GRAPH[Graph Population]
+        CONTRA[Contradiction Detection]
+        INDEX[Search Index]
+        COMPACT[Auto-Compaction<br/>LLM Summarization]
+        CONF_CAL[Confidence Calibration]
+    end
+
+    subgraph Intelligence["Intelligence"]
+        LLM[LLM Provider<br/>Ollama/OpenAI/Anthropic]
+    end
+
+    %% Capture flows
+    MCP --> CAP
+    SDK_PY --> CAP
+    SDK_JS --> CAP
+    CLI --> CAP
+    GIT --> GIT_CAP
+    SLACK --> CAP
+
+    %% API internals
+    CAP --> S3
+    CAP --> REDIS
+    GIT_CAP --> S3
+    GIT_CAP --> REDIS
+    AUTH --> PG
+    SEARCH --> PG
+    SEARCH --> REDIS
+    REFLECT --> SEARCH
+    REFLECT --> LLM
+    FACTS --> PG
+    ADMIN --> PG
+    WEBHOOKS -.->|async| EXT_HOOK[External Systems]
+
+    %% Worker pipeline
+    REDIS -->|BRPOP| INGEST
+    INGEST --> SEG --> EMBED --> EXTRACT --> DEDUP --> GRAPH --> CONTRA --> INDEX
+    EMBED --> PG
+    EXTRACT --> PG
+    DEDUP --> PG
+    GRAPH --> PG
+    CONTRA --> PG
+    INDEX --> PG
+    COMPACT --> LLM
+    COMPACT --> PG
+    CONF_CAL --> PG
+    EXTRACT -.-> WEBHOOKS
+    CONTRA -.-> WEBHOOKS

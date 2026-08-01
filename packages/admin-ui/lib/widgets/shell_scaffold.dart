@@ -189,6 +189,24 @@ class _SideNav extends StatelessWidget {
             path: '/search',
             currentPath: currentPath,
           ),
+          _NavItem(
+            icon: Icons.hub_rounded,
+            label: 'Graph',
+            path: '/graph',
+            currentPath: currentPath,
+          ),
+          _NavItem(
+            icon: Icons.vpn_key_rounded,
+            label: 'API Keys',
+            path: '/keys',
+            currentPath: currentPath,
+          ),
+          _NavItem(
+            icon: Icons.engineering_rounded,
+            label: 'Operations',
+            path: '/operations',
+            currentPath: currentPath,
+          ),
           const Spacer(),
           // Status indicator
           Padding(

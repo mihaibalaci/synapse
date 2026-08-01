@@ -1,70 +1,100 @@
-# Synapse Architecture
+# Architecture — v1.0.0
 
-This document describes the tracked Go implementation. Planned features are separated explicitly.
+## Overview
 
-## Design goals
+Synapse is a single Go binary (`synapse`) that runs as either an API server or a background worker. A Flutter web application provides the admin interface. Storage is PostgreSQL 16 (with pgvector, pg_trgm, pgcrypto), Redis 7, and S3-compatible object storage.
 
-1. Preserve the verbatim source before accepting a capture.
-2. Keep the runtime small: one Go binary, PostgreSQL, Redis, and S3-compatible storage.
-3. Make asynchronous work recoverable and bounded.
-4. Keep failures diagnosable with structured logs, explicit status, dead letters, and dependency readiness.
-5. Keep schema changes reproducible through embedded migrations.
+## Runtime Components
 
-## Runtime components
+| Component | Binary Command | Port | Purpose |
+|-----------|---------------|------|---------|
+| API Server | `synapse serve` | 3000 | HTTP API, auth, search, admin |
+| Worker | `synapse worker` | — | Ingestion pipeline, auto-compaction, reaper |
+| MCP Server | `synapse mcp` | stdin/stdout | IDE integration (11 tools) |
+| Admin UI | Flutter web | 8080 (nginx) | Browser-based administration |
 
-| Component | Implementation | Responsibility |
-|---|---|---|
-| API | `synapse serve`, chi | JWT validation, capture, retrieval, facts, admin APIs |
-| Worker | `synapse worker` | Redis queue consumption, segmentation, embeddings, heuristic facts, indexing, recovery |
-| Migrator | `synapse migrate` | Advisory-locked, checksummed SQL migrations |
-| MCP | `synapse mcp` | JSON-RPC/stdio adapter to the HTTP API |
-| Admin UI | Flutter web + nginx | Metrics and LLM settings |
-| PostgreSQL | pgvector + FTS | Durable metadata, chunks, facts, indexes, settings |
-| Redis | lists, strings, sorted sets | Work queues, dead letters, response cache, popular-query counts |
-| S3/MinIO | S3 API | Verbatim raw session JSON |
-| Embedding provider | Ollama/OpenAI/TEI/local | 768-dimensional vectors |
+## Packages
 
-The Rust package is not linked into the Go request path. It is an optional experimental/benchmark package, not a production dependency.
+```
+go/
+├── cmd/synapse/          # Single entry point, mode dispatch
+├── internal/
+│   ├── api/              # HTTP handlers, auth, router, webhooks
+│   ├── auth/             # JWT, sessions, OIDC, service
+│   ├── compaction/       # LLM summarization pipeline
+│   ├── config/           # Environment-based configuration
+│   ├── ingestion/        # Worker pipeline, embedding, facts, dedup, graph, contradictions, confidence
+│   ├── middleware/       # Rate limiting (role-tiered), logging
+│   ├── mcp/             # Model Context Protocol server
+│   ├── models/          # Shared domain types
+│   ├── retrieval/       # 4-signal engine, adaptive weights, ranking
+│   ├── storage/         # PostgreSQL, Redis, S3, migrations, audit
+│   └── version/         # Single version source of truth
+packages/admin-ui/        # Flutter web application
+sdks/python/             # Python SDK with SessionTracker
+sdks/javascript/         # JavaScript SDK with SessionTracker
+```
 
-## Storage ownership
+## Data Model
 
-- **Object storage is the rebuild source.** `sessions.raw_storage_key` points to immutable raw JSON.
-- **PostgreSQL is the query source.** It stores lossy chunks and extracted facts; these do not replace raw JSON.
-- **Redis is operational state.** Cache loss is harmless. Queue loss delays work, but the PostgreSQL reaper can reconstruct session jobs from raw object pointers.
+### Core Tables
+- `sessions` — captured conversations with status lifecycle
+- `chunks` — segmented, embedded content (768d vectors)
+- `memory_facts` — atomic typed facts with temporal validity
+- `search_index_entries` — searchability tracking
+- `graph_nodes` / `graph_edges` — knowledge graph with weighted co-occurrence
 
-## Authentication and authorization
+### Auth Tables
+- `auth_users` — bcrypt-hashed local accounts
+- `auth_sessions` — rotating refresh tokens (SHA-256 hashed)
+- `api_keys` — self-service bearer keys for service accounts
+- `user_invitations` — token-based invite flow
 
-The API accepts HS256 JWTs with the configured issuer and audience. `sub` and `organization_id` are mandatory. Capture attribution always uses claims; body identity is ignored. Admin APIs additionally require the `admin` role.
+### Operations Tables
+- `schema_migrations` — checksummed migration ledger
+- `audit_log` — structured event log
+- `system_settings` — JSONB key-value (LLM config, adaptive weights, webhooks)
 
-Current queries scope by `organization_id`. The tracked Go code does **not** configure PostgreSQL RLS and does not yet enforce `team_ids`, repository ACLs, or search filters in SQL. Those are known gaps; do not describe the system as RLS-protected.
+## Ingestion Pipeline
 
-## Schema and embeddings
+```
+Raw Payload → S3 PUT → Redis Queue → Worker BRPOP →
+  Segment → Embed (768d) → Store Chunks →
+  Extract Facts → Embed Facts → Contradiction Detection →
+  Cross-Session Dedup → Graph Population → Search Index →
+  Mark Searchable → Emit Webhooks
+```
 
-Migrations live under `go/internal/storage/migrations` and are embedded into the binary. Startup verifies that all migrations are applied; deployment must run `synapse migrate` first. Migrations use a PostgreSQL advisory lock and checksum ledger.
+## Retrieval (4-Signal Hybrid)
 
-The schema uses `vector(768)` for chunks and facts. Migration `003` clears vectors from incompatible legacy spaces before changing dimensions, then recreates HNSW indexes. Run `synapse embed-backfill` afterward. Mixing models in one vector column is unsupported even when dimensions match.
+1. **Semantic** — pgvector ANN cosine similarity
+2. **Keyword** — PostgreSQL full-text search with ts_rank
+3. **Entity Overlap** — fact entity array intersection
+4. **Graph Neighbors** — multi-hop traversal weighted by edge strength
 
-## Reliability boundaries
+Fused via Reciprocal Rank Fusion, then ranked with temporal decay (30-day half-life), usage scoring, graph relevance, repository match, quality score, and confidence multiplier.
 
-- Capture only returns 202 after the S3 PUT and session INSERT succeed.
-- Redis enqueue failure does not reject an already durable capture; the reaper later reconstructs it.
-- Redis `BRPOP` removes a job before processing. A crash can therefore strand work; the reaper addresses this after the session queue drains.
-- Jobs retry four total attempts with bounded exponential delay and then enter `synapse:dead`; failed session jobs mark `sessions.status='failed'`.
-- Embedding failure is non-fatal: keyword retrieval still works and backfill repairs vectors.
-- Fact extraction failure is logged and does not prevent chunk indexing.
-- API readiness checks PostgreSQL, Redis, and object storage. Worker liveness is process-level; it currently has no HTTP health server.
+## Intelligence
 
-## Retrieval
+- **Compaction**: every 6 hours, old sessions are LLM-summarized into canonical chunks
+- **Contradiction Detection**: embedding similarity >0.85 + identical entities → auto-supersession
+- **Confidence Calibration**: 90-day fact decay, usage-based chunk quality boost/decay
+- **Adaptive Retrieval**: per-org signal weights learned from user feedback
+- **Reflection**: LLM reasoning over stored knowledge with optional fact write-back
 
-A miss runs semantic, keyword, and entity signals concurrently, fuses candidates with reciprocal-rank fusion, applies ranking/diversity, and packs by token budget or top-K. Responses are cached for five minutes. Cache keys include the entire request and authorization context. There is no write invalidation, request coalescing, stale-while-revalidate, or popular-query prewarmer.
+## Authentication
 
-## Deliberately not implemented
+- Local accounts with bcrypt (via PostgreSQL pgcrypto)
+- Short-lived access JWTs (15 min) + rotating HttpOnly refresh cookies (7 days)
+- Optional OIDC (Google, GitHub, etc.) with auto-provisioning
+- Self-service API keys for MCP/CLI/CI
+- Per-role rate tiers (admin 300/min, developer 100/min, viewer 50/min)
+- Team/repository access enforcement in all search queries
 
-- Reflect synthesis/write-back and consumption of saved LLM settings by a reasoning path.
-- Structured knowledge extraction, deduplication, graph indexing, observations, feedback learning, and user persistence.
-- Real compaction (`synapse compact` is a no-op); Helm scheduling is disabled by default.
-- Distributed metrics/tracing and alerting. Some metrics are process-local; cache/object-store metrics are sampled or Redis-backed.
-- Queue admission control and per-tenant quotas.
-- Encryption of API keys stored in `system_settings`; use a restricted database and prefer secret references for production.
+## Observability
 
-These boundaries are also listed in [docs/API.md](docs/API.md) and [docs/DATA-FLOW.md](docs/DATA-FLOW.md).
+- `GET /metrics` — Prometheus OpenMetrics format
+- `GET /api/v1/admin/audit` — structured audit log
+- `GET /api/v1/admin/queues` — real-time queue depths
+- Webhook event streaming for external integrations
+- `synapse verify-storage` / `synapse s3-gc` for data integrity

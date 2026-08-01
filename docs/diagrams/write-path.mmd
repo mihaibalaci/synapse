@@ -1,37 +1,39 @@
 sequenceDiagram
-  autonumber
-  participant C as Client
-  participant A as Go API
-  participant O as S3/MinIO
-  participant P as PostgreSQL
-  participant R as Redis
-  participant W as Go worker
-  participant E as Embedding provider
+    participant C as Client (SDK/MCP/Git)
+    participant A as API Server
+    participant S3 as Object Storage
+    participant R as Redis
+    participant W as Worker
+    participant PG as PostgreSQL
+    participant LLM as LLM Provider
+    participant WH as Webhooks
 
-  C->>A: POST /capture/passive or /active + JWT
-  A->>A: validate claims and >=2 messages
-  A->>O: PUT sessions/org/uuid.json
-  alt PUT failure
-    A-->>C: 503 (capture rejected)
-  end
-  A->>P: INSERT session processing/pending
-  alt INSERT failure
-    A-->>C: 503 (raw object may be orphaned)
-  end
-  A->>R: LPUSH synapse:session
-  Note over A,R: enqueue failure is logged and recovered later
-  A-->>C: 202 + sessionId
+    C->>A: POST /capture/passive (or /git)
+    A->>A: Validate JWT + rate limit
+    A->>S3: PUT raw payload
+    A->>PG: INSERT session (status=processing)
+    A->>R: LPUSH synapse:session
+    A-->>C: 202 {sessionId}
 
-  R->>W: BRPOP removes job
-  W->>P: load session attribution/object key
-  W->>O: GET raw JSON
-  W->>P: delete prior facts/chunks for retry
-  W->>W: segment messages
-  W->>E: batch embed chunks (768d)
-  Note over W,E: failure degrades to keyword-only chunks
-  loop chunks
-    W->>P: INSERT chunk
-    W->>E: batch embed heuristic facts
-    W->>P: INSERT facts + UPSERT search index
-  end
-  W->>P: status=indexed, searchable_status=searchable
+    R->>W: BRPOP synapse:session
+    W->>S3: GET raw payload
+    W->>W: Segment into chunks
+    W->>PG: INSERT chunks
+    W->>W: Embed (768d via Ollama)
+    W->>PG: UPDATE chunk embeddings
+    W->>W: Extract facts (heuristic)
+    W->>PG: INSERT facts + embeddings
+    W->>W: Detect contradictions (cosine >0.85)
+    W->>PG: UPDATE superseded facts
+    W->>W: Cross-session dedup (cosine >0.95)
+    W->>PG: Archive duplicates
+    W->>W: Populate knowledge graph
+    W->>PG: UPSERT graph_nodes + graph_edges
+    W->>PG: INSERT search_index_entries
+    W->>PG: UPDATE session (status=searchable)
+    W-->>WH: Emit session.captured + fact.created events
+
+    Note over W,LLM: Periodic (every 6h)
+    W->>PG: Find old sessions (>14 days)
+    W->>LLM: Summarize chunks
+    W->>PG: INSERT summary chunk + archive originals
