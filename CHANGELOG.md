@@ -4,6 +4,19 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-01
+
+### Added
+- Prometheus metrics endpoint at `GET /metrics` (no authentication required).
+- Application counters: cache hits/misses, queries, sessions processed, chunks created, facts extracted, embeddings generated, graph updates, S3 puts/gets, errors by source.
+- Application gauges: concurrent queries, peak concurrent, PostgreSQL active/max conns, Redis conns.
+- Go runtime metrics: goroutines, heap/sys memory, GC pause total, GC cycles, process start time.
+- Build info label via `synapse_info{version="..."}`.
+- Zero external dependencies: uses plain text Prometheus exposition format.
+
+### Changed
+- `/metrics` is publicly accessible (like `/health`) for scraper compatibility. Restrict via network policy if needed.
+
 ## [0.6.0] - 2026-08-01
 
 ### Added
@@ -104,6 +117,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - PostgreSQL schema, Redis queue, S3 raw storage.
 - Basic JWT validation middleware.
 
+[0.7.0]: https://github.com/mihaibalaci/synapse/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mihaibalaci/synapse/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mihaibalaci/synapse/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mihaibalaci/synapse/compare/v0.3.0...v0.4.0

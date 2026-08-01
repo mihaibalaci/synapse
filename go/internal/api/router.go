@@ -53,6 +53,7 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 	// Health checks (no auth required)
 	r.Get("/health", handleHealth)
 	r.Get("/health/ready", handleHealthReady(app))
+	r.Get("/metrics", handlePrometheusMetrics)
 
 	// Browser authentication uses a short-lived access token and a rotating,
 	// HttpOnly refresh cookie. Login is independently throttled because it is
