@@ -25,6 +25,7 @@ import (
 	"github.com/mihaibalaci/synapse/internal/api"
 	"github.com/mihaibalaci/synapse/internal/auth"
 	"github.com/mihaibalaci/synapse/internal/cli"
+	"github.com/mihaibalaci/synapse/internal/compaction"
 	"github.com/mihaibalaci/synapse/internal/config"
 	"github.com/mihaibalaci/synapse/internal/ingestion"
 	"github.com/mihaibalaci/synapse/internal/mcp"
@@ -280,8 +281,40 @@ func runWorker(cfg *config.Config) {
 
 func runCompaction(cfg *config.Config) {
 	slog.Info("Running compaction...")
-	// TODO: call the Go compaction logic directly (already in packages/compaction-go)
-	slog.Info("Compaction complete")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+	defer cancel()
+
+	db, err := storage.ConnectWithRetry(ctx, cfg.DatabaseURL, storage.DefaultRetry)
+	if err != nil {
+		slog.Error("Could not connect for compaction", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+	if err := db.CheckMigrations(ctx); err != nil {
+		slog.Error("Schema not current", "error", err)
+		os.Exit(1)
+	}
+
+	embedder := ingestion.NewEmbeddingClient()
+	compCfg := compaction.LoadConfigFromEnv()
+
+	result, err := compaction.Run(ctx, db, embedder, compCfg)
+	if err != nil {
+		slog.Error("Compaction failed", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Info("Compaction complete",
+		"sessionsCompacted", result.SessionsCompacted,
+		"chunksArchived", result.ChunksArchived,
+		"summariesCreated", result.SummariesCreated,
+		"tokensSaved", result.TokensSaved,
+		"errors", result.Errors,
+		"durationMs", result.DurationMs,
+	)
+	if result.Errors > 0 {
+		os.Exit(1)
+	}
 }
 
 func runMCP(cfg *config.Config) {

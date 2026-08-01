@@ -4,6 +4,19 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-01
+
+### Added
+- Memory compaction pipeline (`synapse compact`): summarizes old session chunks via LLM, archives originals, embeds the summary for continued searchability.
+- Supports Ollama, OpenAI, and Anthropic as compaction LLM providers.
+- Configurable via `COMPACTION_MIN_AGE_DAYS` (default 14), `COMPACTION_MAX_PER_RUN` (default 100), `COMPACTION_WORKERS` (default 4).
+- Sessions with fewer than 3 active chunks are skipped; sessions that already have a summary chunk are not re-compacted.
+- Summary chunks are marked `type = 'summary'`, `confidence = 'high'`, and are fully searchable.
+- Archived chunks retain their data but are excluded from retrieval.
+
+### Changed
+- `synapse compact` is now a real implementation (previously a no-op stub).
+
 ## [0.2.0] - 2026-08-01
 
 ### Added
@@ -51,5 +64,6 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - PostgreSQL schema, Redis queue, S3 raw storage.
 - Basic JWT validation middleware.
 
+[0.3.0]: https://github.com/mihaibalaci/synapse/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mihaibalaci/synapse/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mihaibalaci/synapse/releases/tag/v0.1.0
