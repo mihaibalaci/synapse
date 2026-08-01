@@ -4,6 +4,19 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-01
+
+### Added
+- Automatic contradiction detection: new facts are checked against existing valid facts sharing the same entities. When embedding similarity exceeds 0.85 with identical entity sets, the older fact is automatically marked as superseded (`temporal_valid_until`, `temporal_superseded_by`).
+- `synapse detect-contradictions` CLI command for batch contradiction scanning across recent facts.
+- Configurable via `CONTRADICTION_ORGANIZATION` and `CONTRADICTION_SINCE_DAYS` environment variables.
+- `SearchResult` model extended with `supersededBy` and `supersedes` fields for client-side conflict display.
+- Contradiction detection runs inline during fact extraction (after embedding) for real-time supersession.
+
+### Changed
+- Fact extraction pipeline now includes contradiction detection as a post-processing step.
+- Conservative detection threshold (similarity > 0.85 + exact entity match) to avoid false positives.
+
 ## [0.7.0] - 2026-08-01
 
 ### Added
@@ -117,6 +130,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - PostgreSQL schema, Redis queue, S3 raw storage.
 - Basic JWT validation middleware.
 
+[0.8.0]: https://github.com/mihaibalaci/synapse/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mihaibalaci/synapse/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mihaibalaci/synapse/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mihaibalaci/synapse/compare/v0.4.0...v0.5.0

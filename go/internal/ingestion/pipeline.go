@@ -221,6 +221,16 @@ func (p *Pipeline) ExtractFacts(ctx context.Context, chunkID, orgID string) erro
 		if err := p.facts.Create(ctx, fact); err != nil {
 			return fmt.Errorf("create fact: %w", err)
 		}
+
+		// Detect contradictions with existing facts and auto-supersede.
+		if fact.Embedding != nil {
+			detector := NewContradictionDetector(p.db)
+			if n, err := detector.DetectForFact(ctx, fact.ID, orgID); err != nil {
+				slog.Debug("Contradiction detection failed", "fact", fact.ID, "error", err)
+			} else if n > 0 {
+				slog.Info("Auto-superseded facts", "new", fact.ID, "superseded", n)
+			}
+		}
 	}
 
 	slog.Debug("Facts extracted", "chunkId", chunkID, "count", len(facts))

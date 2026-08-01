@@ -45,40 +45,40 @@ type ChunkResult struct {
 // ─── Fact ────────────────────────────────────────────────────────────────────
 
 type Fact struct {
-	ID              string    `json:"id"`
-	Content         string    `json:"content"`
-	Type            string    `json:"type"`
-	Entities        []string  `json:"entities"`
-	Confidence      float64   `json:"confidence"`
-	UsageCount      int       `json:"usageCount"`
+	ID              string     `json:"id"`
+	Content         string     `json:"content"`
+	Type            string     `json:"type"`
+	Entities        []string   `json:"entities"`
+	Confidence      float64    `json:"confidence"`
+	UsageCount      int        `json:"usageCount"`
 	ValidFrom       *time.Time `json:"validFrom,omitempty"`
 	ValidUntil      *time.Time `json:"validUntil,omitempty"`
-	SupersededBy    *string   `json:"supersededBy,omitempty"`
-	SourceChunkID   *string   `json:"sourceChunkId,omitempty"`
-	SourceSessionID *string   `json:"sourceSessionId,omitempty"`
-	ExtractedFrom   string    `json:"extractedFrom"`
-	AuthorID        string    `json:"authorId"`
-	OrganizationID  string    `json:"organizationId"`
-	Scope           string    `json:"scope"`
-	Embedding       []float64 `json:"-"`
-	EmbeddingModel  string    `json:"-"`
-	Repository      string    `json:"repository,omitempty"`
-	Language        string    `json:"language,omitempty"`
-	Frameworks      []string  `json:"frameworks,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
+	SupersededBy    *string    `json:"supersededBy,omitempty"`
+	SourceChunkID   *string    `json:"sourceChunkId,omitempty"`
+	SourceSessionID *string    `json:"sourceSessionId,omitempty"`
+	ExtractedFrom   string     `json:"extractedFrom"`
+	AuthorID        string     `json:"authorId"`
+	OrganizationID  string     `json:"organizationId"`
+	Scope           string     `json:"scope"`
+	Embedding       []float64  `json:"-"`
+	EmbeddingModel  string     `json:"-"`
+	Repository      string     `json:"repository,omitempty"`
+	Language        string     `json:"language,omitempty"`
+	Frameworks      []string   `json:"frameworks,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
 }
 
 // ─── Search ──────────────────────────────────────────────────────────────────
 
 type SearchRequest struct {
-	Query      string            `json:"query"`
-	Context    *SearchContext    `json:"context,omitempty"`
-	Filters    *SearchFilters    `json:"filters,omitempty"`
-	TopK       int               `json:"topK"`
-	Offset     int               `json:"offset"`
-	MaxTokens  int               `json:"maxTokens,omitempty"`
-	Strategy   string            `json:"strategy"`
-	IncludeContent bool          `json:"includeContent"`
+	Query          string         `json:"query"`
+	Context        *SearchContext `json:"context,omitempty"`
+	Filters        *SearchFilters `json:"filters,omitempty"`
+	TopK           int            `json:"topK"`
+	Offset         int            `json:"offset"`
+	MaxTokens      int            `json:"maxTokens,omitempty"`
+	Strategy       string         `json:"strategy"`
+	IncludeContent bool           `json:"includeContent"`
 }
 
 type SearchContext struct {
@@ -96,15 +96,17 @@ type SearchFilters struct {
 }
 
 type SearchResult struct {
-	ID         string  `json:"id"`
-	Type       string  `json:"type"`
-	Title      string  `json:"title"`
-	Summary    string  `json:"summary"`
-	Content    string  `json:"content,omitempty"`
-	FinalScore float64 `json:"finalScore"`
-	Repository string  `json:"repository,omitempty"`
-	Language   string  `json:"language,omitempty"`
-	CreatedAt  string  `json:"createdAt"`
+	ID           string  `json:"id"`
+	Type         string  `json:"type"`
+	Title        string  `json:"title"`
+	Summary      string  `json:"summary"`
+	Content      string  `json:"content,omitempty"`
+	FinalScore   float64 `json:"finalScore"`
+	Repository   string  `json:"repository,omitempty"`
+	Language     string  `json:"language,omitempty"`
+	CreatedAt    string  `json:"createdAt"`
+	SupersededBy string  `json:"supersededBy,omitempty"`
+	Supersedes   string  `json:"supersedes,omitempty"`
 }
 
 type SearchResponse struct {
@@ -131,11 +133,11 @@ type Observation struct {
 // ─── Capture ─────────────────────────────────────────────────────────────────
 
 type CaptureRequest struct {
-	Messages []Message `json:"messages"`
-	Source   string    `json:"source"`
-	Repository string `json:"repository,omitempty"`
-	Branch   string    `json:"branch,omitempty"`
-	Language string    `json:"language,omitempty"`
+	Messages   []Message `json:"messages"`
+	Source     string    `json:"source"`
+	Repository string    `json:"repository,omitempty"`
+	Branch     string    `json:"branch,omitempty"`
+	Language   string    `json:"language,omitempty"`
 }
 
 type Message struct {
@@ -146,8 +148,8 @@ type Message struct {
 // ─── Feedback ────────────────────────────────────────────────────────────────
 
 type FeedbackEvent struct {
-	SearchID  string `json:"searchId"`
-	ResultID  string `json:"resultId"`
-	Action    string `json:"action"`
-	Comment   string `json:"comment,omitempty"`
+	SearchID string `json:"searchId"`
+	ResultID string `json:"resultId"`
+	Action   string `json:"action"`
+	Comment  string `json:"comment,omitempty"`
 }

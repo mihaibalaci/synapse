@@ -67,10 +67,12 @@ func main() {
 		runVerifyStorage(cfg)
 	case "embed-backfill":
 		runEmbedBackfill(cfg)
+	case "detect-contradictions":
+		runDetectContradictions(cfg)
 	case "search", "facts", "history", "reflect", "insight", "status":
 		cli.Run(os.Args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: synapse [serve|worker|migrate|auth-bootstrap|compact|mcp|slack|verify-storage|embed-backfill|search|facts|history|reflect|insight|status]\n", mode)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: synapse [serve|worker|migrate|auth-bootstrap|compact|detect-contradictions|mcp|slack|verify-storage|embed-backfill|search|facts|history|reflect|insight|status]\n", mode)
 		os.Exit(1)
 	}
 }
@@ -130,6 +132,41 @@ func runAuthBootstrap(cfg *config.Config) {
 	} else {
 		slog.Info("Authentication bootstrap skipped because the organization already has users", "organization_id", organizationID)
 	}
+}
+
+// runDetectContradictions scans recent facts for semantic contradictions and
+// marks older conflicting facts as superseded.
+func runDetectContradictions(cfg *config.Config) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	db, err := storage.ConnectWithRetry(ctx, cfg.DatabaseURL, storage.DefaultRetry)
+	if err != nil {
+		slog.Error("Could not connect for contradiction detection", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+	if err := db.CheckMigrations(ctx); err != nil {
+		slog.Error("Schema not current", "error", err)
+		os.Exit(1)
+	}
+
+	detector := ingestion.NewContradictionDetector(db)
+	org := os.Getenv("CONTRADICTION_ORGANIZATION")
+	if org == "" {
+		org = "default"
+	}
+	days := 7
+	if v := os.Getenv("CONTRADICTION_SINCE_DAYS"); v != "" {
+		fmt.Sscanf(v, "%d", &days)
+	}
+
+	superseded, err := detector.DetectBatch(ctx, org, days)
+	if err != nil {
+		slog.Error("Contradiction detection failed", "error", err)
+		os.Exit(1)
+	}
+	fmt.Printf("facts superseded: %d\n", superseded)
 }
 
 // runVerifyStorage reports whether any session points at a raw object that is
