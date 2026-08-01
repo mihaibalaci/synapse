@@ -306,12 +306,46 @@ func runWorker(cfg *config.Config) {
 	pool.StartReaper(5 * time.Minute)
 	pool.Start()
 
+	// Automatic compaction runs on a configurable interval (default: every 6 hours).
+	// It summarizes old sessions in the background without blocking ingestion.
+	compactInterval := time.Duration(envIntMain("COMPACTION_INTERVAL_HOURS", 6)) * time.Hour
+	compactCtx, compactCancel := context.WithCancel(context.Background())
+	go func() {
+		if compactInterval <= 0 {
+			return
+		}
+		embedder := ingestion.NewEmbeddingClient()
+		compCfg := compaction.LoadConfigFromEnv()
+		// Run once shortly after startup (2 min delay) then on interval.
+		timer := time.NewTimer(2 * time.Minute)
+		defer timer.Stop()
+		for {
+			select {
+			case <-compactCtx.Done():
+				return
+			case <-timer.C:
+				slog.Info("Automatic compaction starting")
+				result, err := compaction.Run(compactCtx, app.DB, embedder, compCfg)
+				if err != nil {
+					slog.Warn("Automatic compaction failed", "error", err)
+				} else if result.SessionsCompacted > 0 {
+					slog.Info("Automatic compaction complete",
+						"sessions", result.SessionsCompacted,
+						"tokensSaved", result.TokensSaved,
+						"errors", result.Errors)
+				}
+				timer.Reset(compactInterval)
+			}
+		}
+	}()
+
 	// Drain in-flight jobs on SIGTERM rather than dropping them.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
 	slog.Info("Shutdown signal received, stopping workers")
+	compactCancel()
 	pool.Stop()
 	slog.Info("Worker stopped cleanly")
 }
@@ -399,4 +433,14 @@ func parseLogLevel(level string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+func envIntMain(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		var i int
+		if _, err := fmt.Sscanf(v, "%d", &i); err == nil && i > 0 {
+			return i
+		}
+	}
+	return fallback
 }

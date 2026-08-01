@@ -365,37 +365,47 @@ func rankCandidates(candidates []candidate, queryRepo string) []candidate {
 		c := &candidates[i]
 		s := c.Scores
 
-		// Weights
-		semantic := s.Semantic * 0.30
+		// Signal weights (sum to ~1.0 before confidence multiplier)
+		semantic := s.Semantic * 0.25
 		keyword := s.Keyword * 0.10
 		entity := s.EntityMatch * 0.08
+		graph := s.GraphRelevance * 0.07
 
-		// Freshness (130-day half-life)
+		// Temporal decay: 30-day half-life for recent relevance, floor at 0.1
 		ageDays := now.Sub(c.CreatedAt).Hours() / 24.0
-		freshness := math.Exp(-ageDays/130.0) * 0.12
+		temporalDecay := math.Max(math.Exp(-0.693*ageDays/30.0), 0.1)
+		freshness := temporalDecay * 0.15
 
-		// Repository match
+		// Repository match boost
 		repoMatch := 0.0
 		if queryRepo != "" && c.Repository == queryRepo {
-			repoMatch = 0.15
+			repoMatch = 0.12
 		}
 
-		// Usage (cap at 100)
-		usage := math.Min(float64(c.UsageCount)/100.0, 1.0) * 0.10
+		// Usage with decay: high usage is good but old unused content decays
+		usageRaw := math.Min(float64(c.UsageCount)/50.0, 1.0)
+		usageDecayed := usageRaw * temporalDecay
+		usage := usageDecayed * 0.10
 
-		// Quality
-		quality := c.QualityScore * 0.10
+		// Quality score
+		quality := c.QualityScore * 0.08
 
-		// Confidence penalty
+		// Importance score: combines multiple signals into a compound relevance
+		importance := (semantic + keyword + entity + graph + freshness + repoMatch + usage + quality)
+
+		// Confidence multiplier
 		confMult := 1.0
 		switch c.Confidence {
 		case "low":
 			confMult = 0.6
 		case "archived":
-			confMult = 0.3
+			confMult = 0.2
+		case "high":
+			confMult = 1.1
 		}
 
-		c.FinalScore = (semantic + keyword + entity + freshness + repoMatch + usage + quality) * confMult
+		c.FinalScore = importance * confMult
+		c.Scores.Temporal = temporalDecay
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {

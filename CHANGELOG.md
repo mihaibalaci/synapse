@@ -4,6 +4,57 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-08-01
+
+### Added
+
+#### Automatic Compaction Scheduling (v0.9.0)
+- Worker process runs compaction automatically on a configurable interval (`COMPACTION_INTERVAL_HOURS`, default 6).
+- 2-minute initial delay after startup, then repeats on timer.
+- Graceful cancellation on SIGTERM.
+
+#### Learning Loop / Reflection (v0.10.0)
+- `POST /api/v1/reflect` now uses the configured LLM to reason over stored knowledge.
+- Searches relevant chunks and facts, builds context, and generates a synthesized answer.
+- Optional `writeBack: true` extracts new atomic facts from the reflection and persists them.
+- Supports Ollama, OpenAI, and Anthropic providers.
+
+#### Graph Reasoning (v0.11.0)
+- `GET /api/v1/admin/graph/entity/{entity}` — returns direct neighbors and weighted edges.
+- `GET /api/v1/admin/graph/path?from=X&to=Y` — BFS shortest path (max 4 hops) via recursive CTE.
+- `GET /api/v1/admin/graph/important?limit=20` — top entities ranked by total edge weight.
+
+#### Temporal Decay and Relevance Scoring (v0.12.0)
+- Retrieval ranking uses 30-day half-life temporal decay (floor 0.1) instead of flat 130-day.
+- Usage score decays with time: old unused content drops naturally.
+- Graph relevance signal integrated into composite ranking.
+- High-confidence chunks get 1.1x boost; archived chunks 0.2x penalty.
+
+#### Cross-Session Deduplication (v0.13.0)
+- Pipeline `Deduplicate` stage uses embedding cosine similarity (>0.95 threshold).
+- Lower-quality duplicate is archived; higher-quality canonical gets usage boost.
+- Runs after embedding during ingestion — real-time dedup, not batch-only.
+
+#### Adaptive Retrieval Strategies (v0.14.0)
+- Per-organization signal weights learned from feedback (upvotes/downvotes).
+- Weights stored in `system_settings` and cached in memory.
+- Learning rate 0.01 with normalization and minimum 0.02 floor per signal.
+- `retrieval/adaptive.go` provides `RecordFeedback` and `GetWeights` APIs.
+
+#### User & Access Model (v0.15.0)
+- Migration 005: `api_keys` and `user_invitations` tables.
+- Self-service API key management: `GET/POST /api/v1/keys`, `DELETE /api/v1/keys/{id}`.
+- Keys use `sk_synapse_` prefix with SHA-256 hashed storage.
+- Admin invite flow: `POST /api/v1/admin/invite` generates a token; `POST /api/v1/auth/accept-invite` creates the user.
+- Team/repository access enforcement helper (`EnforceTeamAccess`).
+
+#### Operational Maturity (v0.16.0)
+- `GET /api/v1/admin/queues` — real-time depth of all Redis ingestion queues + dead-letter counts.
+- `GET /api/v1/admin/dead-letters` — inspect dead-letter queue items.
+- `POST /api/v1/admin/dead-letters/retry` — move items back to processing queue.
+- `GET /api/v1/admin/jobs` — recent session processing history with status.
+- `GET /api/v1/admin/backup-status` — database size, table count, record counts, backup command reference.
+
 ## [0.8.0] - 2026-08-01
 
 ### Added
@@ -130,6 +181,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - PostgreSQL schema, Redis queue, S3 raw storage.
 - Basic JWT validation middleware.
 
+[0.16.0]: https://github.com/mihaibalaci/synapse/compare/v0.8.0...v0.16.0
 [0.8.0]: https://github.com/mihaibalaci/synapse/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mihaibalaci/synapse/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mihaibalaci/synapse/compare/v0.5.0...v0.6.0

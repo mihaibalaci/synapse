@@ -243,10 +243,53 @@ func (p *Pipeline) ExtractKnowledge(ctx context.Context, chunkID string) error {
 	return nil
 }
 
-// Deduplicate checks a chunk against existing chunks for duplicates.
+// Deduplicate checks a chunk against existing chunks for near-duplicates using
+// embedding cosine similarity. When a near-duplicate is found (>0.95 similarity),
+// the lower-quality chunk is archived and the canonical one gets a usage boost.
 func (p *Pipeline) Deduplicate(ctx context.Context, chunkID, orgID string) error {
-	// TODO: Use Rust MinHash for fingerprinting + cosine check
-	// For now, skip (dedup happens at query time via RRF)
+	// Find near-duplicates via pgvector ANN
+	rows, err := p.db.Query(ctx, `
+		SELECT existing.id, existing.quality_score,
+			1 - (existing.embedding <=> (SELECT embedding FROM chunks WHERE id = $1)) AS similarity
+		FROM chunks existing
+		WHERE existing.organization_id = $2
+			AND existing.id <> $1
+			AND existing.embedding IS NOT NULL
+			AND existing.confidence <> 'archived'
+			AND existing.searchable_status = 'searchable'
+			AND 1 - (existing.embedding <=> (SELECT embedding FROM chunks WHERE id = $1)) > 0.95
+		ORDER BY similarity DESC
+		LIMIT 5`, chunkID, orgID)
+	if err != nil {
+		return fmt.Errorf("dedup query: %w", err)
+	}
+	defer rows.Close()
+
+	// Load the new chunk's quality
+	var newQuality float64
+	_ = p.db.QueryRow(ctx, `SELECT quality_score FROM chunks WHERE id = $1`, chunkID).Scan(&newQuality)
+
+	for rows.Next() {
+		var existingID string
+		var existingQuality, similarity float64
+		if err := rows.Scan(&existingID, &existingQuality, &similarity); err != nil {
+			continue
+		}
+
+		// Keep the higher-quality chunk, archive the other
+		if newQuality >= existingQuality {
+			// New chunk is better or equal: archive existing
+			_ = p.db.Exec(ctx, `UPDATE chunks SET confidence = 'archived', updated_at = NOW() WHERE id = $1`, existingID)
+			_ = p.db.Exec(ctx, `UPDATE chunks SET usage_count = usage_count + 1, updated_at = NOW() WHERE id = $1`, chunkID)
+		} else {
+			// Existing chunk is better: archive new one, boost existing
+			_ = p.db.Exec(ctx, `UPDATE chunks SET confidence = 'archived', updated_at = NOW() WHERE id = $1`, chunkID)
+			_ = p.db.Exec(ctx, `UPDATE chunks SET usage_count = usage_count + 1, updated_at = NOW() WHERE id = $1`, existingID)
+			break // new chunk is archived, stop checking
+		}
+
+		slog.Debug("Deduplicated chunk", "archived", existingID, "kept", chunkID, "similarity", fmt.Sprintf("%.4f", similarity))
+	}
 	return nil
 }
 

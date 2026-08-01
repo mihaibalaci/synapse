@@ -64,6 +64,7 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 	r.Post("/api/v1/auth/logout", handleAuthLogout(app))
 	r.Get("/api/v1/auth/oidc/login", handleOIDCLogin(app))
 	r.Get("/api/v1/auth/oidc/callback", handleOIDCCallback(app))
+	r.Post("/api/v1/auth/accept-invite", handleAcceptInvite)
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
@@ -91,7 +92,7 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 		r.Get("/api/v1/facts/{entity}/history", handleGetFactHistory)
 
 		// Reflect endpoint (learning loop)
-		r.Post("/api/v1/reflect", handleReflect)
+		r.Post("/api/v1/reflect", handleReflectReal)
 
 		// Observations
 		r.Get("/api/v1/observations", handleListObservations)
@@ -133,7 +134,27 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 			r.Delete("/chunks/{id}", handleDeleteChunk)
 			r.Get("/facts", handleBrowseFacts)
 			r.Delete("/facts/{id}", handleDeleteFact)
+
+			// Graph reasoning
+			r.Get("/graph/entity/{entity}", handleGraphEntity)
+			r.Get("/graph/path", handleGraphPath)
+			r.Get("/graph/important", handleGraphImportant)
+
+			// Invitations
+			r.Post("/invite", handleInviteUser)
+
+			// Operations
+			r.Get("/queues", handleQueueStatus)
+			r.Get("/dead-letters", handleDeadLetterList)
+			r.Post("/dead-letters/retry", handleDeadLetterRetry)
+			r.Get("/jobs", handleJobHistory)
+			r.Get("/backup-status", handleBackupStatus)
 		})
+
+		// Self-service API keys (any authenticated user)
+		r.Get("/api/v1/keys", handleListAPIKeys)
+		r.Post("/api/v1/keys", handleCreateAPIKey)
+		r.Delete("/api/v1/keys/{id}", handleRevokeAPIKey)
 	})
 
 	return r
@@ -463,13 +484,6 @@ func handleCreateFact(w http.ResponseWriter, r *http.Request) {
 var validFactTypes = map[string]bool{
 	"decision": true, "lesson": true, "pattern": true,
 	"constraint": true, "opinion": true,
-}
-
-func handleReflect(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"reflectId": "", "query": "", "answer": "Reflect not yet implemented in Go",
-		"confidence": "low", "reasoning": "Go migration in progress", "sources": []any{},
-	})
 }
 
 func handleListObservations(w http.ResponseWriter, r *http.Request) {
