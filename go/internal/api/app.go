@@ -25,6 +25,7 @@ type App struct {
 	Settings *storage.SettingsRepo
 	Auth     *auth.Service
 	OIDC     *auth.OIDCProvider
+	Audit    *storage.AuditRepo
 
 	// Embedder generates vectors for chunk content and search queries.
 	Embedder *ingestion.EmbeddingClient
@@ -64,6 +65,7 @@ func NewApp(ctx context.Context, cfg *config.Config) (*App, error) {
 		Stats:    storage.NewStatsRepo(db),
 		Settings: storage.NewSettingsRepo(db),
 		Auth:     auth.NewService(db, cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.AuthAccessTTL, cfg.AuthRefreshTTL),
+		Audit:    storage.NewAuditRepo(db),
 		Embedder: ingestion.NewEmbeddingClient(),
 	}
 

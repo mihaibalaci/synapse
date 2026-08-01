@@ -11,25 +11,47 @@ import (
 	"github.com/mihaibalaci/synapse/internal/auth"
 )
 
-// RateLimiter implements per-user rate limiting using token buckets.
-type RateLimiter struct {
-	limiters map[string]*rate.Limiter
-	mu       sync.RWMutex
-	rate     rate.Limit
-	burst    int
+// RateTier defines rate limits for different user roles.
+type RateTier struct {
+	RequestsPerMinute int
+	BurstSize         int
 }
 
-// NewRateLimiter creates a rate limiter with the given requests per second and burst.
-func NewRateLimiter(maxRequests int, windowSeconds int) *RateLimiter {
-	rps := rate.Limit(float64(maxRequests) / float64(windowSeconds))
-	return &RateLimiter{
-		limiters: make(map[string]*rate.Limiter),
-		rate:     rps,
-		burst:    maxRequests / 2, // Allow burst up to half the window
+// DefaultTiers returns the built-in rate limit tiers by role.
+func DefaultTiers() map[string]RateTier {
+	return map[string]RateTier{
+		"admin":     {RequestsPerMinute: 300, BurstSize: 50},
+		"team_lead": {RequestsPerMinute: 200, BurstSize: 30},
+		"developer": {RequestsPerMinute: 100, BurstSize: 20},
+		"viewer":    {RequestsPerMinute: 50, BurstSize: 10},
+		"default":   {RequestsPerMinute: 60, BurstSize: 10},
 	}
 }
 
-func (rl *RateLimiter) getLimiter(key string) *rate.Limiter {
+// RateLimiter implements per-user rate limiting with role-based tiers.
+type RateLimiter struct {
+	limiters map[string]*rate.Limiter
+	mu       sync.RWMutex
+	tiers    map[string]RateTier
+	// Fallback for users without a recognized role
+	defaultRate  rate.Limit
+	defaultBurst int
+}
+
+// NewRateLimiter creates a rate limiter with the given base requests and window.
+// Role-based tiers override the base for authenticated users.
+func NewRateLimiter(maxRequests int, windowSeconds int) *RateLimiter {
+	tiers := DefaultTiers()
+	rps := rate.Limit(float64(maxRequests) / float64(windowSeconds))
+	return &RateLimiter{
+		limiters:     make(map[string]*rate.Limiter),
+		tiers:        tiers,
+		defaultRate:  rps,
+		defaultBurst: maxRequests / 2,
+	}
+}
+
+func (rl *RateLimiter) getLimiter(key string, claims *auth.Claims) *rate.Limiter {
 	rl.mu.RLock()
 	limiter, exists := rl.limiters[key]
 	rl.mu.RUnlock()
@@ -41,26 +63,41 @@ func (rl *RateLimiter) getLimiter(key string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	// Double check
 	if limiter, exists = rl.limiters[key]; exists {
 		return limiter
 	}
 
-	limiter = rate.NewLimiter(rl.rate, rl.burst)
+	// Determine tier from role
+	r := rl.defaultRate
+	burst := rl.defaultBurst
+	if claims != nil && len(claims.Roles) > 0 {
+		// Use the highest-privilege role's tier
+		for _, role := range claims.Roles {
+			if tier, ok := rl.tiers[role]; ok {
+				tierRate := rate.Limit(float64(tier.RequestsPerMinute) / 60.0)
+				if tierRate > r {
+					r = tierRate
+					burst = tier.BurstSize
+				}
+			}
+		}
+	}
+
+	limiter = rate.NewLimiter(r, burst)
 	rl.limiters[key] = limiter
 	return limiter
 }
 
-// Middleware returns an HTTP middleware that rate-limits by user ID.
+// Middleware returns an HTTP middleware that rate-limits by user ID with role tiers.
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Determine the rate limit key (user ID or IP)
 		key := r.RemoteAddr
-		if claims := auth.GetClaims(r); claims != nil {
+		claims := auth.GetClaims(r)
+		if claims != nil {
 			key = claims.UserID
 		}
 
-		limiter := rl.getLimiter(key)
+		limiter := rl.getLimiter(key, claims)
 		if !limiter.Allow() {
 			w.Header().Set("Retry-After", "60")
 			http.Error(w, `{"error":"RATE_LIMITED","message":"Too many requests"}`, http.StatusTooManyRequests)
@@ -73,7 +110,6 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 
 // Cleanup removes stale limiters (call periodically).
 func (rl *RateLimiter) Cleanup(maxAge time.Duration) {
-	// Simple: just reset the map periodically
 	rl.mu.Lock()
 	rl.limiters = make(map[string]*rate.Limiter)
 	rl.mu.Unlock()

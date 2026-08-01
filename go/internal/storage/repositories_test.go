@@ -69,7 +69,7 @@ func TestSearchByKeywordScansNullRepository(t *testing.T) {
 	}
 
 	repo := NewChunkRepo(db)
-	results, err := repo.SearchByKeyword(ctx, marker, orgID, 10)
+	results, err := repo.SearchByKeyword(ctx, marker, orgID, 10, nil, nil)
 	if err != nil {
 		t.Fatalf("SearchByKeyword returned an error: %v", err)
 	}

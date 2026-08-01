@@ -71,9 +71,9 @@ type ChunkRepo struct{ db *DB }
 
 func NewChunkRepo(db *DB) *ChunkRepo { return &ChunkRepo{db: db} }
 
-func (r *ChunkRepo) SearchByVector(ctx context.Context, embedding []float64, orgID string, limit int) ([]models.ChunkResult, error) {
-	// pgvector ANN search
-	rows, err := r.db.Query(ctx, `
+func (r *ChunkRepo) SearchByVector(ctx context.Context, embedding []float64, orgID string, limit int, teamIDs []string, repos []string) ([]models.ChunkResult, error) {
+	// pgvector ANN search with optional team/repo filters
+	query := `
 		SELECT id, title, summary, content, token_count, type,
 			COALESCE(repository, '') AS repository, language,
 			quality_score, usage_count, confidence, created_at,
@@ -81,10 +81,23 @@ func (r *ChunkRepo) SearchByVector(ctx context.Context, embedding []float64, org
 		FROM chunks
 		WHERE organization_id = $2
 			AND embedding IS NOT NULL
-			AND searchable_status = 'searchable'
-		ORDER BY embedding <=> $1::vector
-		LIMIT $3`,
-		vectorToString(embedding), orgID, limit)
+			AND searchable_status = 'searchable'`
+	args := []any{vectorToString(embedding), orgID}
+	n := 3
+	if len(teamIDs) > 0 {
+		query += fmt.Sprintf(` AND team_id = ANY($%d::text[])`, n)
+		args = append(args, teamIDs)
+		n++
+	}
+	if len(repos) > 0 {
+		query += fmt.Sprintf(` AND repository = ANY($%d::text[])`, n)
+		args = append(args, repos)
+		n++
+	}
+	query += fmt.Sprintf(` ORDER BY embedding <=> $1::vector LIMIT $%d`, n)
+	args = append(args, limit)
+
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -93,11 +106,6 @@ func (r *ChunkRepo) SearchByVector(ctx context.Context, embedding []float64, org
 	var results []models.ChunkResult
 	for rows.Next() {
 		var c models.ChunkResult
-		// The scan error must be checked: pgx assigns fields left to right and
-		// stops at the first failure, so a single unexpected NULL silently
-		// leaves the trailing fields (quality_score, usage_count, confidence,
-		// created_at, similarity) at their zero values. That produced rankings
-		// computed from all-zero scores and 0001-01-01 timestamps.
 		if err := rows.Scan(&c.ID, &c.Title, &c.Summary, &c.Content, &c.TokenCount, &c.Type,
 			&c.Repository, &c.Language, &c.QualityScore, &c.UsageCount, &c.Confidence,
 			&c.CreatedAt, &c.Similarity); err != nil {
@@ -108,8 +116,8 @@ func (r *ChunkRepo) SearchByVector(ctx context.Context, embedding []float64, org
 	return results, rows.Err()
 }
 
-func (r *ChunkRepo) SearchByKeyword(ctx context.Context, query, orgID string, limit int) ([]models.ChunkResult, error) {
-	rows, err := r.db.Query(ctx, `
+func (r *ChunkRepo) SearchByKeyword(ctx context.Context, query, orgID string, limit int, teamIDs []string, repos []string) ([]models.ChunkResult, error) {
+	sql := `
 		SELECT id, title, summary, content, token_count, type,
 			COALESCE(repository, '') AS repository, language,
 			quality_score, usage_count, confidence, created_at,
@@ -117,9 +125,23 @@ func (r *ChunkRepo) SearchByKeyword(ctx context.Context, query, orgID string, li
 		FROM chunks
 		WHERE organization_id = $2
 			AND searchable_status = 'searchable'
-			AND search_vector @@ plainto_tsquery('english', $1)
-		ORDER BY similarity DESC
-		LIMIT $3`, query, orgID, limit)
+			AND search_vector @@ plainto_tsquery('english', $1)`
+	args := []any{query, orgID}
+	n := 3
+	if len(teamIDs) > 0 {
+		sql += fmt.Sprintf(` AND team_id = ANY($%d::text[])`, n)
+		args = append(args, teamIDs)
+		n++
+	}
+	if len(repos) > 0 {
+		sql += fmt.Sprintf(` AND repository = ANY($%d::text[])`, n)
+		args = append(args, repos)
+		n++
+	}
+	sql += fmt.Sprintf(` ORDER BY similarity DESC LIMIT $%d`, n)
+	args = append(args, limit)
+
+	rows, err := r.db.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}

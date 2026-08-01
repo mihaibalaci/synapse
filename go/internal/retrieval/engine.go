@@ -112,7 +112,7 @@ func (e *Engine) Search(ctx context.Context, req *models.SearchRequest, claims *
 			return
 		}
 
-		results, err := e.chunks.SearchByVector(ctx, queryVec, orgID, 50)
+		results, err := e.chunks.SearchByVector(ctx, queryVec, orgID, 50, claims.TeamIDs, claims.RepositoryAccess)
 		candidates := make([]candidate, len(results))
 		for i, r := range results {
 			candidates[i] = candidate{
@@ -130,7 +130,7 @@ func (e *Engine) Search(ctx context.Context, req *models.SearchRequest, claims *
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		results, err := e.chunks.SearchByKeyword(ctx, req.Query, orgID, 50)
+		results, err := e.chunks.SearchByKeyword(ctx, req.Query, orgID, 50, claims.TeamIDs, claims.RepositoryAccess)
 		candidates := make([]candidate, len(results))
 		for i, r := range results {
 			candidates[i] = candidate{

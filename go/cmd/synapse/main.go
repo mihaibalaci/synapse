@@ -69,6 +69,8 @@ func main() {
 		runEmbedBackfill(cfg)
 	case "detect-contradictions":
 		runDetectContradictions(cfg)
+	case "s3-gc":
+		runS3GC(cfg)
 	case "search", "facts", "history", "reflect", "insight", "status":
 		cli.Run(os.Args[1:])
 	default:
@@ -132,6 +134,29 @@ func runAuthBootstrap(cfg *config.Config) {
 	} else {
 		slog.Info("Authentication bootstrap skipped because the organization already has users", "organization_id", organizationID)
 	}
+}
+
+func runS3GC(cfg *config.Config) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	app, err := api.NewApp(ctx, cfg)
+	if err != nil {
+		slog.Error("Failed to initialize app for S3 GC", "error", err)
+		os.Exit(1)
+	}
+	defer app.Close()
+
+	dryRun := os.Getenv("S3_GC_DRY_RUN") == "true"
+	result, err := api.RunS3GC(ctx, app, dryRun)
+	if err != nil {
+		slog.Error("S3 GC failed", "error", err)
+		os.Exit(1)
+	}
+	fmt.Printf("objects scanned : %d\n", result.ObjectsScanned)
+	fmt.Printf("orphans found  : %d\n", result.Orphans)
+	fmt.Printf("bytes freed    : %d\n", result.BytesFreed)
+	fmt.Printf("errors         : %d\n", result.Errors)
+	fmt.Printf("dry run        : %v\n", dryRun)
 }
 
 // runDetectContradictions scans recent facts for semantic contradictions and

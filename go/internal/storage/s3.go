@@ -375,3 +375,72 @@ func (s *ObjectStore) Exists(ctx context.Context, key string) (bool, error) {
 	}
 	return status == http.StatusOK, nil
 }
+
+// ObjectInfo holds metadata about a stored object.
+type ObjectInfo struct {
+	Key  string
+	Size int64
+}
+
+// ListAll returns all object keys in the bucket. For large buckets this should
+// be paginated; this implementation handles the common self-hosted case.
+func (s *ObjectStore) ListAll(ctx context.Context) ([]ObjectInfo, error) {
+	url := strings.TrimRight(s.Endpoint, "/") + "/" + s.Bucket + "?list-type=2&max-keys=10000"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.sign(req, nil)
+	body, status, err := s.do(req, nil, "ListAll")
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, fmt.Errorf("list bucket %d: %s", status, truncateForLog(string(body)))
+	}
+
+	// Parse XML response (minimal, handles <Key> and <Size> tags)
+	var objects []ObjectInfo
+	text := string(body)
+	for {
+		keyStart := strings.Index(text, "<Key>")
+		if keyStart < 0 {
+			break
+		}
+		keyEnd := strings.Index(text[keyStart:], "</Key>")
+		if keyEnd < 0 {
+			break
+		}
+		key := text[keyStart+5 : keyStart+keyEnd]
+
+		var size int64
+		sizeStart := strings.Index(text[keyStart:], "<Size>")
+		if sizeStart >= 0 {
+			sizeEnd := strings.Index(text[keyStart+sizeStart:], "</Size>")
+			if sizeEnd >= 0 {
+				fmt.Sscanf(text[keyStart+sizeStart+6:keyStart+sizeStart+sizeEnd], "%d", &size)
+			}
+		}
+		objects = append(objects, ObjectInfo{Key: key, Size: size})
+		text = text[keyStart+keyEnd+6:]
+	}
+	return objects, nil
+}
+
+// Delete removes an object from the bucket.
+func (s *ObjectStore) Delete(ctx context.Context, key string) error {
+	url := s.objectURL(key)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	s.sign(req, nil)
+	_, status, err := s.do(req, nil, "Delete")
+	if err != nil {
+		return err
+	}
+	if status != 204 && status != 200 {
+		return fmt.Errorf("delete %s: status %d", key, status)
+	}
+	return nil
+}

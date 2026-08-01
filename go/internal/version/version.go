@@ -2,4 +2,4 @@
 // Update this file when cutting a release.
 package version
 
-const Version = "0.16.0"
+const Version = "1.0.0"

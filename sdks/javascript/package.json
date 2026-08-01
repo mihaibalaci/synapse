@@ -1,0 +1,14 @@
+{
+  "name": "@synapse/sdk",
+  "version": "0.1.0",
+  "description": "JavaScript/TypeScript SDK for the Synapse memory API",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": ["src/"],
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "keywords": ["synapse", "memory", "ai", "knowledge-base", "sdk"]
+}

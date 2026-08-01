@@ -4,6 +4,61 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-08-01
+
+### Added
+
+#### Team Isolation & Access Control
+- Search queries enforce `team_ids` and `repository_access` from JWT claims as SQL array filters.
+- Password reset flow: request token (stored in Redis, 1h TTL), execute reset, admin force-reset.
+- Per-role rate limit tiers: admin 300/min, developer 100/min, viewer 50/min.
+
+#### Structured Audit Log
+- Migration 006: `audit_log` table with org/actor/action/resource/timestamp indexes.
+- `GET /api/v1/admin/audit` endpoint with action filter and pagination.
+- `Audit()` helper for fire-and-forget event recording from any handler.
+
+#### S3 Garbage Collection
+- `synapse s3-gc` command: lists all bucket objects, cross-references sessions, deletes orphans.
+- Configurable dry-run mode via `S3_GC_DRY_RUN=true`.
+
+#### Python SDK
+- Zero-dependency client (`synapse_sdk.SynapseClient`): search, context, capture, facts, reflect, feedback.
+- `SessionTracker`: automatic periodic flush at message threshold or time interval.
+
+#### JavaScript SDK
+- Zero-dependency Node.js 18+ client (`@synapse/sdk`): search, context, capture, facts, reflect, feedback.
+- `SessionTracker`: auto-flush with configurable threshold and interval.
+
+#### Git-Aware Capture
+- `POST /api/v1/capture/git`: accepts commits, PRs, diffs, and code review comments.
+- Converts git context to session messages for the standard ingestion pipeline.
+- Detects dominant language from file extensions.
+
+#### Webhooks & Event Streaming
+- `GET/POST/DELETE /api/v1/admin/webhooks`: manage webhook subscriptions.
+- Events: session.captured, fact.created, fact.superseded, chunk.archived, user.created, user.disabled.
+- Async delivery with secret header and event type identification.
+- Persisted in system_settings, loaded on startup.
+
+#### Confidence Calibration
+- `ConfidenceCalibrator`: time-decay for unused facts (90-day half-life, floor 0.3), quality boost for high-usage chunks, quality decay for unused chunks.
+- Feedback handler now updates confidence: positive boosts usage/confidence, negative weakens quality.
+
+#### Feedback → Ranking Loop
+- `POST /api/v1/feedback` now actively updates chunk quality and fact confidence.
+- Positive feedback: +1 usage, +0.02 confidence.
+- Negative feedback: -0.03 quality/confidence.
+- Wired into adaptive retrieval strategy for continuous improvement.
+
+#### Admin Search Interface
+- Flutter `SearchPage`: real-time debounced search with results showing score, repository, lineage, and supersession status.
+- Displays source IDs and timestamps for attribution/lineage.
+
+#### Onboarding Wizard
+- Flutter `OnboardingPage`: 4-step guided setup (welcome, health check, capture example, completion).
+- Accessible at `/onboarding` for first-time administrators.
+
 ## [0.16.0] - 2026-08-01
 
 ### Added
@@ -181,6 +236,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - PostgreSQL schema, Redis queue, S3 raw storage.
 - Basic JWT validation middleware.
 
+[1.0.0]: https://github.com/mihaibalaci/synapse/compare/v0.16.0...v1.0.0
 [0.16.0]: https://github.com/mihaibalaci/synapse/compare/v0.8.0...v0.16.0
 [0.8.0]: https://github.com/mihaibalaci/synapse/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mihaibalaci/synapse/compare/v0.6.0...v0.7.0

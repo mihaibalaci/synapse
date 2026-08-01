@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'pages/dashboard/dashboard_page.dart';
 import 'pages/login/login_page.dart';
 import 'pages/memory/memory_page.dart';
+import 'pages/onboarding/onboarding_page.dart';
+import 'pages/search/search_page.dart';
 import 'pages/users/users_page.dart';
 import 'pages/system/system_page.dart';
 import 'pages/activity/activity_page.dart';
@@ -29,6 +31,11 @@ GoRouter buildRouter(AuthService auth) {
         path: '/login',
         pageBuilder: (context, state) =>
             const NoTransitionPage(child: LoginPage()),
+      ),
+      GoRoute(
+        path: '/onboarding',
+        pageBuilder: (context, state) =>
+            const NoTransitionPage(child: OnboardingPage()),
       ),
       ShellRoute(
         builder: (context, state, child) => ShellScaffold(child: child),
@@ -62,6 +69,11 @@ GoRouter buildRouter(AuthService auth) {
             path: '/memory',
             pageBuilder: (context, state) =>
                 const NoTransitionPage(child: MemoryPage()),
+          ),
+          GoRoute(
+            path: '/search',
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: SearchPage()),
           ),
         ],
       ),

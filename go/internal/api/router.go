@@ -16,6 +16,7 @@ import (
 
 	"github.com/mihaibalaci/synapse/internal/auth"
 	"github.com/mihaibalaci/synapse/internal/config"
+	"github.com/mihaibalaci/synapse/internal/ingestion"
 	"github.com/mihaibalaci/synapse/internal/middleware"
 	"github.com/mihaibalaci/synapse/internal/models"
 	"github.com/mihaibalaci/synapse/internal/retrieval"
@@ -65,6 +66,8 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 	r.Get("/api/v1/auth/oidc/login", handleOIDCLogin(app))
 	r.Get("/api/v1/auth/oidc/callback", handleOIDCCallback(app))
 	r.Post("/api/v1/auth/accept-invite", handleAcceptInvite)
+	r.Post("/api/v1/auth/password-reset/request", handleRequestPasswordReset)
+	r.Post("/api/v1/auth/password-reset/execute", handleExecutePasswordReset)
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
@@ -80,6 +83,7 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 		r.Post("/api/v1/capture/active", CaptureActiveHandler(app))
 		r.Post("/api/v1/capture/event", handleCaptureEvent)
 		r.Post("/api/v1/capture/events", handleCaptureEvents)
+		r.Post("/api/v1/capture/git", handleGitCapture)
 
 		// Retrieval endpoints
 		r.Post("/api/v1/search", handleSearch)
@@ -142,6 +146,7 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 
 			// Invitations
 			r.Post("/invite", handleInviteUser)
+			r.Post("/reset-password", handleAdminResetPassword)
 
 			// Operations
 			r.Get("/queues", handleQueueStatus)
@@ -149,6 +154,10 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 			r.Post("/dead-letters/retry", handleDeadLetterRetry)
 			r.Get("/jobs", handleJobHistory)
 			r.Get("/backup-status", handleBackupStatus)
+			r.Get("/audit", handleAuditLog)
+			r.Get("/webhooks", handleListWebhooks)
+			r.Post("/webhooks", handleCreateWebhook)
+			r.Delete("/webhooks/{id}", handleDeleteWebhook)
 		})
 
 		// Self-service API keys (any authenticated user)
@@ -496,7 +505,32 @@ func handleGetObservation(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFeedback(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]any{"received": true})
+	claims := auth.GetClaims(r)
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "AUTH_ERROR", "Missing claims")
+		return
+	}
+	var req struct {
+		ResultID string `json:"resultId"`
+		Score    int    `json:"score"`
+		Query    string `json:"query"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusCreated, map[string]any{"received": true})
+		return
+	}
+
+	app := appFromRequest(r)
+	ctx := r.Context()
+
+	// Update confidence/quality based on feedback
+	if req.Score > 0 {
+		ingestion.RecordPositiveFeedback(ctx, app.DB, req.ResultID)
+	} else if req.Score < 0 {
+		ingestion.RecordNegativeFeedback(ctx, app.DB, req.ResultID)
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{"received": true, "applied": true})
 }
 
 func handleFeedbackBatch(w http.ResponseWriter, r *http.Request) {
