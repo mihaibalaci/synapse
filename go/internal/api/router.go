@@ -20,6 +20,7 @@ import (
 	"github.com/mihaibalaci/synapse/internal/models"
 	"github.com/mihaibalaci/synapse/internal/retrieval"
 	"github.com/mihaibalaci/synapse/internal/storage"
+	"github.com/mihaibalaci/synapse/internal/version"
 )
 
 type appContextKey struct{}
@@ -133,7 +134,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "healthy",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"version":   "0.2.0",
+		"version":   version.Version,
 	})
 }
 

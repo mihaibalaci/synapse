@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mihaibalaci/synapse/internal/version"
 )
 
 // ─── JSON-RPC Types ──────────────────────────────────────────────────────────
@@ -204,7 +206,7 @@ func (s *Server) handleRequest(req *Request) {
 		s.sendResult(req.ID, map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "synapse", "version": "0.2.0"},
+			"serverInfo":      map[string]any{"name": "synapse", "version": version.Version},
 		})
 
 	case "tools/list":
