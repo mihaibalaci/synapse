@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import '../services/auth_service.dart';
 import '../services/refresh_bus.dart';
 
 class ShellScaffold extends StatelessWidget {
@@ -82,6 +83,14 @@ class _TopBar extends StatelessWidget {
               },
             ),
           ),
+          const SizedBox(width: 8),
+          Tooltip(
+            message: 'Sign out',
+            child: IconButton(
+              icon: const Icon(Icons.logout_rounded, size: 20),
+              onPressed: () => context.read<AuthService>().logout(),
+            ),
+          ),
         ],
       ),
     );
@@ -102,7 +111,9 @@ class _SideNav extends StatelessWidget {
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLow,
         border: Border(
-          right: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+          right: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+          ),
         ),
       ),
       child: Column(

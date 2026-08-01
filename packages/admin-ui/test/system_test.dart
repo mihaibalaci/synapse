@@ -43,8 +43,8 @@ void main() {
       await tester.pumpWidget(buildTestApp(const SystemPage()));
       await tester.pump();
 
-      expect(find.text('pgvector + FTS + graph + RLS'), findsOneWidget);
-      expect(find.text('BullMQ + cache + rate limits'), findsOneWidget);
+      expect(find.text('pgvector + full-text search'), findsOneWidget);
+      expect(find.text('Lists + cache + rate limits'), findsOneWidget);
     });
 
     testWidgets('renders data flow section', (tester) async {

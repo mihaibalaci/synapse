@@ -67,12 +67,16 @@ func SeedFromCounts(counts map[string]int) {
 }
 
 func (m *Metrics) hitRate() float64 {
-	total := m.cacheHits + m.cacheMisses
+	hits := atomic.LoadInt64(&m.cacheHits)
+	misses := atomic.LoadInt64(&m.cacheMisses)
+	total := hits + misses
 	if total == 0 {
 		return 0
 	}
-	return float64(m.cacheHits) / float64(total) * 100
+	return float64(hits) / float64(total) * 100
 }
+
+func metricValue(value *int64) int64 { return atomic.LoadInt64(value) }
 
 // ─── Increment helpers (thread-safe) ─────────────────────────────────────────
 
@@ -144,9 +148,11 @@ func SetPoolStats(pgActive, pgMax, redis int64) {
 
 func RecordConcurrent(n int64) {
 	atomic.StoreInt64(&metrics.concurrent, n)
-	peak := atomic.LoadInt64(&metrics.peakConcurrent)
-	if n > peak {
-		atomic.StoreInt64(&metrics.peakConcurrent, n)
+	for {
+		peak := atomic.LoadInt64(&metrics.peakConcurrent)
+		if n <= peak || atomic.CompareAndSwapInt64(&metrics.peakConcurrent, peak, n) {
+			return
+		}
 	}
 }
 

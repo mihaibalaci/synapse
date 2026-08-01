@@ -44,9 +44,6 @@ func CapturePassiveHandler(app *App) http.HandlerFunc {
 
 		orgID := claims.OrganizationID
 		devID := claims.UserID
-		if req.DevID != "" {
-			devID = req.DevID
-		}
 
 		sessionID := uuid.New().String()
 

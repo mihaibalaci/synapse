@@ -1,62 +1,21 @@
-%%{init: {'theme': 'base'}}%%
-
 stateDiagram-v2
-    [*] --> uploaded: POST /api/v1/sessions → 202
+  [*] --> processing_pending: capture persisted
+  processing_pending --> queued: LPUSH succeeds
+  processing_pending --> recovery_wait: LPUSH fails or worker crashes
+  queued --> processing: worker BRPOP
+  recovery_wait --> queued: reaper after queue drains and age > 10m
+  processing --> indexed_searchable: chunks and index stored
+  processing --> retry_wait: stage error or timeout
+  retry_wait --> queued: attempts 1-3 after 2/4/8s
+  retry_wait --> failed_dead_letter: attempt 4
 
-    uploaded --> parsing: worker picks up job
-    parsing --> segmenting: messages normalized
-    segmenting --> chunks_committed: chunks + actions persisted
+  note right of indexed_searchable
+    sessions.status = indexed
+    searchable_status = searchable
+    enrichment_status currently remains pending
+  end note
 
-    state "Per-chunk: searchable_status" as SEARCH {
-        s_pending: pending
-        s_processing: processing
-        s_searchable: searchable ✓
-        s_blocked: blocked (governance)
-        s_failed: failed
-
-        s_pending --> s_processing: index action claimed
-        s_processing --> s_searchable: index completed
-        s_processing --> s_blocked: content restricted
-        s_processing --> s_failed: index failed
-    }
-
-    state "Per-chunk: enrichment_status" as ENRICH {
-        e_pending: pending
-        e_processing: processing
-        e_complete: complete ✓
-        e_partial: partial (some failed)
-        e_failed: failed
-        e_not_required: not_required (fast tier)
-
-        e_pending --> e_processing: action claimed
-        e_processing --> e_complete: all actions completed
-        e_processing --> e_partial: some completed + some failed
-        e_processing --> e_failed: all failed
-        e_pending --> e_not_required: tier = fast
-    }
-
-    chunks_committed --> SEARCH
-    chunks_committed --> ENRICH
-
-    note right of SEARCH
-        Session searchable_status is an aggregate:
-        ALL chunks searchable/blocked → session searchable
-        ANY chunk failed → session failed
-    end note
-
-    note right of ENRICH
-        Session enrichment_status is an aggregate:
-        ALL chunks complete/not_required → session complete
-        MIXED complete + failed → partial
-    end note
-
-    state "Lifecycle (over time)" as LIFECYCLE {
-        active: confidence = high
-        aging: confidence = medium
-        stale: confidence = low
-        archived: confidence = archived
-
-        active --> aging: code changes detected (future)
-        aging --> stale: no usage + time
-        stale --> archived: compaction CronJob prunes
-    }
+  note right of failed_dead_letter
+    job is in synapse:dead
+    sessions.status = failed
+  end note

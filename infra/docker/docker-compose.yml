@@ -1,26 +1,25 @@
-## Recall local stack: PostgreSQL + Redis + MinIO + API + worker + dashboard.
+name: synapse
 
-x-recall-environment: &recall-environment
+x-synapse-environment: &synapse-environment
   NODE_ENV: production
   LOG_LEVEL: ${LOG_LEVEL:-info}
-  DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/synapse
+  DATABASE_URL: postgresql://synapse_app:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/synapse
   REDIS_URL: redis://redis:6379
-  S3_BUCKET: synapse-raw
-  S3_REGION: us-east-1
+  S3_BUCKET: ${S3_BUCKET:-synapse-raw}
+  S3_REGION: ${S3_REGION:-us-east-1}
   S3_ENDPOINT: http://minio:9000
-  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
-  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-  AWS_EC2_METADATA_DISABLED: "true"
-  EMBEDDING_PROVIDER: local
-  EMBEDDING_MODEL: recall-local-1536
-  EMBEDDING_DIMENSIONS: "1536"
-  LLM_PROVIDER: local-none
-  AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.recall.local}
-  AUTH_AUDIENCE: ${AUTH_AUDIENCE:-recall}
-  AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-recall-local-development-secret-change-before-sharing}
-  QUEUE_CONCURRENCY: ${QUEUE_CONCURRENCY:-5}
-  # Defaults match src/config. Raise only for local load testing, where the
-  # limiter would otherwise be the thing under measurement.
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+  EMBEDDING_URL: ${EMBEDDING_URL:-http://host.docker.internal:11434}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+  EMBEDDING_DIMENSIONS: "768"
+  LLM_PROVIDER: ${LLM_PROVIDER:-local-none}
+  LLM_MODEL: ${LLM_MODEL:-}
+  LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
+  AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.synapse.local}
+  AUTH_AUDIENCE: ${AUTH_AUDIENCE:-synapse}
+  AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?set AUTH_JWT_SECRET to at least 32 characters}
   RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
   RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}
 
@@ -28,16 +27,13 @@ services:
   postgres:
     image: pgvector/pgvector:0.8.1-pg16
     environment:
-      POSTGRES_DB: recall
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ../../migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      POSTGRES_DB: synapse
+      POSTGRES_USER: synapse_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports: ["${POSTGRES_PORT:-5432}:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d recall"]
+      test: ["CMD-SHELL", "pg_isready -U synapse_app -d synapse"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -46,10 +42,8 @@ services:
   redis:
     image: redis:7.4.2-alpine
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
+    ports: ["${REDIS_PORT:-6379}:6379"]
+    volumes: [redis_data:/data]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -60,14 +54,11 @@ services:
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     command: ["server", "/data", "--console-address", ":9001"]
-    ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
-    volumes:
-      - minio_data:/data
+    ports: ["${MINIO_PORT:-9000}:9000", "${MINIO_CONSOLE_PORT:-9001}:9001"]
+    volumes: [minio_data:/data]
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
@@ -77,89 +68,56 @@ services:
 
   minio-init:
     image: minio/mc:RELEASE.2025-04-16T18-13-26Z
-    depends_on:
-      minio:
-        condition: service_healthy
+    depends_on: { minio: { condition: service_healthy } }
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >-
-        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
-        mc mb local/synapse-raw --ignore-existing &&
-        mc mb local/synapse-exports --ignore-existing
+    command: ['mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" && mc mb local/${S3_BUCKET:-synapse-raw} --ignore-existing']
+    restart: "no"
+
+  migrate:
+    build: { context: ../.., dockerfile: infra/docker/Dockerfile.api }
+    command: ["migrate"]
+    environment: *synapse-environment
+    depends_on: { postgres: { condition: service_healthy } }
     restart: "no"
 
   api:
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.api
+    build: { context: ../.., dockerfile: infra/docker/Dockerfile.api }
+    command: ["serve"]
     environment:
-      <<: *recall-environment
+      <<: *synapse-environment
       PORT: "3000"
       HOST: 0.0.0.0
-    ports:
-      - "${API_PORT:-3000}:3000"
+    ports: ["${API_PORT:-3000}:3000"]
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/health/ready"]
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 10s
     restart: unless-stopped
 
   worker:
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.worker
+    build: { context: ../.., dockerfile: infra/docker/Dockerfile.worker }
+    command: ["worker"]
     environment:
-      <<: *recall-environment
-      WORKER_HEALTH_PORT: "3001"
-    ports:
-      - "${WORKER_HEALTH_PORT:-3001}:3001"
+      <<: *synapse-environment
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3001/health/ready"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
     restart: unless-stopped
 
   dashboard:
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.dashboard
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
-    environment:
-      NODE_ENV: production
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
-    ports:
-      - "${DASHBOARD_PORT:-3100}:3100"
-    depends_on:
-      api:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3100"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 15s
+    build: { context: ../.., dockerfile: infra/docker/Dockerfile.dashboard }
+    ports: ["${ADMIN_PORT:-8080}:8080"]
+    depends_on: { api: { condition: service_healthy } }
     restart: unless-stopped
 
 volumes:

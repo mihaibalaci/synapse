@@ -1,219 +1,102 @@
 # Getting Started
 
-## Prerequisites
+## Native single-server setup
 
-- Node.js 20+
-- Docker + Docker Compose
-- An OpenAI API key (for embeddings) — or use `EMBEDDING_PROVIDER=local` for dev
-
-## Quick Start
+Use the component installer for the quickest supported setup:
 
 ```bash
-# 1. Clone and install
+git clone https://github.com/mihaibalaci/synapse.git
 cd synapse
-npm install
-
-# 2. Start infrastructure
-docker compose -f infra/docker/docker-compose.yml up -d
-
-# 3. Configure environment
-cp .env.example .env
-# Edit .env if you want real embeddings (add OPENAI_API_KEY)
-
-# 4. Start the API and the workers (separate processes)
-npm run dev          # API
-npm run dev:worker   # workers, in a second terminal
+cp deploy/install.env.example /root/synapse-install.env
+chmod 600 /root/synapse-install.env
+sudo deploy/install.sh --interactive
 ```
 
-The API is now running at `http://localhost:3000`.
+See [INSTALLATION.md](INSTALLATION.md) for external services, non-interactive installs, one-component runs, migrations, and security notes.
 
-`docker compose up` already builds and runs the API, worker, and dashboard, so
-steps 3 and 4 are only needed when running the service from source.
+## Run from source
 
-Every endpoint except `/health` and `/health/ready` requires a bearer JWT whose
-issuer and audience match `AUTH_ISSUER`/`AUTH_AUDIENCE` and which carries `sub`,
-`organization_id`, `team_ids`, `roles`, and `repository_access`. Identity comes
-from verified claims only; request-body identity fields are ignored.
-`npm run smoke:local` mints a valid local token and exercises the full
-upload-to-search path.
-
-## Verify It Works
+Requirements: Go matching `go/go.mod`, PostgreSQL with pgvector, Redis, S3/MinIO, and a 768-dimensional embedding provider.
 
 ```bash
-# Health check
-curl http://localhost:3000/health
+export DATABASE_URL='postgresql://synapse_app:...@127.0.0.1:5432/synapse'
+export REDIS_URL='redis://127.0.0.1:6379'
+export S3_ENDPOINT='http://127.0.0.1:9000'
+export S3_BUCKET='synapse-raw'
+export S3_REGION='us-east-1'
+export AWS_ACCESS_KEY_ID='...'
+export AWS_SECRET_ACCESS_KEY='...'
+export EMBEDDING_PROVIDER=ollama
+export EMBEDDING_URL='http://127.0.0.1:11434'
+export EMBEDDING_MODEL=nomic-embed-text
+export EMBEDDING_DIMENSIONS=768
+export AUTH_ISSUER='https://auth.synapse.local'
+export AUTH_AUDIENCE=synapse
+export AUTH_JWT_SECRET='at-least-32-characters-change-me'
 
-# Upload a test session
-curl -X POST http://localhost:3000/api/v1/sessions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "clientId": "00000000-0000-0000-0000-000000000001",
-    "developerId": "dev-test",
-    "organizationId": "org-test",
-    "messages": [
-      {
-        "id": "00000000-0000-0000-0000-000000000010",
-        "role": "user",
-        "content": "How do I fix a Lambda timeout in a VPC?",
-        "codeBlocks": [],
-        "timestamp": "2025-07-25T10:00:00Z",
-        "tokenCount": 15,
-        "toolCalls": []
-      },
-      {
-        "id": "00000000-0000-0000-0000-000000000011",
-        "role": "assistant",
-        "content": "Lambda timeouts in VPCs are usually caused by DNS resolution delays. Use a VPC endpoint for the service you are calling, or move the Lambda to a public subnet with a NAT gateway.",
-        "codeBlocks": [],
-        "timestamp": "2025-07-25T10:00:05Z",
-        "tokenCount": 50,
-        "toolCalls": []
-      }
-    ],
-    "metadata": {
-      "project": "my-service",
-      "language": "python",
-      "languages": ["python"],
-      "frameworks": ["aws-lambda"],
-      "aiProvider": "claude",
-      "aiModel": "claude-sonnet-4-20250514",
-      "tags": ["lambda", "vpc", "timeout"]
-    },
-    "startedAt": "2025-07-25T10:00:00Z",
-    "endedAt": "2025-07-25T10:01:00Z",
-    "totalTokens": 65
-  }'
-
-# Search for it
-curl -X POST http://localhost:3000/api/v1/context \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "lambda timeout vpc",
-    "developerId": "dev-test",
-    "organizationId": "org-test"
-  }'
+cd go
+go run ./cmd/synapse migrate
+go run ./cmd/synapse serve
+# second terminal, same environment
+go run ./cmd/synapse worker
 ```
 
-## Local Services
+Readiness: `curl -fsS http://127.0.0.1:3000/health/ready`.
 
-After `docker compose up`, these services are available:
+## Docker Compose
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| PostgreSQL | `localhost:5432` | Vectors, FTS, relational graph, outbox |
-| Redis | `localhost:6379` | BullMQ queues + cache (`noeviction`) |
-| MinIO Console | `http://localhost:9001` | S3 browser (login: minioadmin/minioadmin) |
-| API | `http://localhost:3000` | `/health`, `/health/ready`, `/api/v1/*` |
-| Worker health | `http://localhost:3001/health` | Liveness via dispatch heartbeat |
-| Dashboard | `http://localhost:3100` | Web UI |
-
-There is no Neo4j and no OpenSearch. PostgreSQL FTS/`pg_trgm` and the relational
-`graph_nodes`/`graph_edges` tables replaced both.
-
-## Project Structure
-
-```
-src/
-├── api/           → REST endpoints (upload, search, feedback)
-├── ingestion/     → Pipeline: parser, segmenter, extractor, deduplication, compaction
-├── retrieval/     → Hybrid search engine, ranking, permissions, feedback
-├── storage/       → Database, S3, graph, search index, cache adapters
-├── models/        → Zod schemas (session, chunk, knowledge, retrieval, permissions, graph)
-├── utils/         → Embedding client, logger, governance scanner
-└── config/        → Environment config with validation
-```
-
-## Key Concepts
-
-**Session** — A complete AI coding conversation (uploaded by IDE plugin)
-
-**Chunk** — A topically coherent segment of a session (800-1200 tokens). The atomic unit of retrieval.
-
-**Knowledge Record** — Structured extraction from a chunk (Problem/Solution, Architecture Decision, Best Practice, How-To)
-
-**Cluster** — A group of near-duplicate chunks about the same topic. Has one canonical representative.
-
-**Tier 1 / Tier 2** — Processing depth. Tier 1 = fast (embed + index). Tier 2 = deep (LLM extract + dedup + graph).
-
-## Configuration
-
-Key environment variables (see `.env.example` for all):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `EMBEDDING_PROVIDER` | `local` | `local` for dev, `openai` for real embeddings |
-| `OPENAI_API_KEY` | — | Required if EMBEDDING_PROVIDER=openai |
-| `LLM_PROVIDER` | `claude` | For Tier 2 knowledge extraction |
-| `QUEUE_CONCURRENCY` | `5` | Parallel ingestion workers |
-| `DATABASE_URL` | `postgresql://...` | Postgres connection string |
-
-## Development Workflow
+Copy `infra/docker/.env.example` to `.env`, replace all credentials, ensure Ollama is reachable at the configured `EMBEDDING_URL`, then:
 
 ```bash
-npm run dev                  # API only (hot reload)
-npm run dev:worker           # All workers (hot reload)
-npm run build                # Compile core + workspaces
-npm run test                 # Run tests (vitest)
-npm run lint                 # ESLint
-npm run migrate              # Apply ordered migrations (advisory-locked, idempotent)
-npm run backfill:embeddings  # Resumable re-embedding backfill
-npm run smoke:local          # Authenticated upload → search proof against Compose
-npm run load:retrieval       # Seed a corpus and measure retrieval p50/p95/p99
-npm run test:concurrency     # Concurrency regression test (needs TEST_DATABASE_URL)
+docker compose -f infra/docker/docker-compose.yml up --build
 ```
 
-Migrations never run automatically on startup. Apply them explicitly, or let the
-Helm pre-upgrade Job do it.
-
-`npm test` skips the concurrency regression test unless a real database is
-supplied, because the race it guards cannot be reproduced with mocks:
+Compose runs migration before API/worker startup. After the first boot, create an admin user:
 
 ```bash
-TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/synapse \
-  npm run test:concurrency
+docker compose exec api env \
+  AUTH_BOOTSTRAP_EMAIL=admin@synapse.local \
+  AUTH_BOOTSTRAP_PASSWORD=ChangeMeNow123 \
+  /usr/local/bin/synapse auth-bootstrap
 ```
 
-See [DATA-FLOW.md](DATA-FLOW.md) for how a request moves through the system.
+Then open `http://localhost:8080` and sign in with those credentials.
 
-## Consumer Packages
+## Service-token authenticated capture test
 
-After the control plane is running, set up the consumer layer:
+For non-browser clients (MCP, CLI, CI pipelines), mint a JWT with HS256 and claims like:
+
+```json
+{
+  "sub": "developer-1",
+  "organization_id": "default",
+  "roles": ["admin"],
+  "team_ids": [],
+  "repository_access": [],
+  "iss": "https://auth.synapse.local",
+  "aud": "synapse",
+  "exp": 1999999999
+}
+```
+
+Then:
 
 ```bash
-# MCP Server (for IDE integration)
-cd packages/mcp-server && npm install && npm run build
+curl -fsS -X POST http://127.0.0.1:3000/api/v1/capture/passive \
+  -H "Authorization: Bearer $SYNAPSE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"We decided to use PostgreSQL."},{"role":"assistant","content":"Record that architecture decision."}],"source":"smoke-test","repository":"demo"}'
 
-# CLI Tool
-cd packages/cli && npm install && npm run build && npm link
-# Now you can run: synapse search "how do we deploy?"
-
-# Slack Bot
-cd packages/slack-bot && npm install && npm run dev
-
-# Web Dashboard
-cd packages/dashboard && npm install && npm run dev
-# Open http://localhost:3100
+curl -fsS -X POST http://127.0.0.1:3000/api/v1/search \
+  -H "Authorization: Bearer $SYNAPSE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"Which database did we choose?","topK":5,"includeContent":true}'
 ```
 
-See [docs/IDE-SETUP.md](IDE-SETUP.md) for connecting your specific IDE.
-
-## Deployment
-
-For production deployment on any infrastructure, see [DEPLOYMENT.md](DEPLOYMENT.md).
-
-**Quick reference:**
+## Development checks
 
 ```bash
-# On-prem Kubernetes
-helm install synapse ./deploy/helm/synapse -f deploy/helm/synapse/profiles/on-prem.yaml
-
-# AWS (Terraform + Helm)
-cd deploy/terraform && terraform apply -var-file=environments/aws-prod.tfvars
-
-# GCP
-cd deploy/terraform && terraform apply -var-file=environments/gcp-prod.tfvars
+cd go && go test ./... && go vet ./... && go build ./...
+cd ../packages/retrieval-engine && cargo test
+cd ../admin-ui && flutter analyze && flutter test && flutter build web
 ```
-
-The AWS CDK stacks were removed: they provisioned OpenSearch and pointed at
-Neo4j, neither of which the service uses. Terraform plus Helm is the only
-supported cloud path.

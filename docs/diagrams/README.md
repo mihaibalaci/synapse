@@ -1,34 +1,18 @@
 # Diagrams
 
-Mermaid source files for the Recall data flow. Render with any Mermaid-aware
-viewer (GitHub, GitLab, VS Code Mermaid Preview, `mmdc` CLI, or
-[mermaid.live](https://mermaid.live)).
+These Mermaid files describe the tracked Go implementation. Dashed/planned nodes are not operational features.
 
-| File | What it shows |
-|------|---------------|
-| [`data-flow.mmd`](data-flow.mmd) | Complete system topology: clients, API, workers, stores, AI providers, compaction, and migration |
-| [`write-path.mmd`](write-path.mmd) | Session upload sequence: synchronous 202 boundary, outbox, pipeline, enrichment, reconciliation |
-| [`read-path.mmd`](read-path.mmd) | Search request sequence: cache, embedding LRU, parallel signals, batched hydration, ACL, ranking |
-| [`compaction.mmd`](compaction.mmd) | Weekly compaction CronJob: synthesis, fact supersession, stale archival |
-| [`status-model.mmd`](status-model.mmd) | Chunk/session status state machine and confidence lifecycle |
+| File | Scope |
+|---|---|
+| `data-flow.mmd` | Runtime topology and store ownership |
+| `write-path.mmd` | Capture through worker indexing |
+| `read-path.mmd` | Cache and three-signal retrieval |
+| `status-model.mmd` | Queue, retry, recovery, terminal states |
+| `compaction.mmd` | Honest no-op boundary and planned phases |
+| `learning-loop.mmd` | Implemented path versus planned learning loop |
 
-## Rendering locally
+Render with a Mermaid-aware Markdown viewer or `mmdc` if installed:
 
 ```bash
-# Install the Mermaid CLI
-npm install -g @mermaid-js/mermaid-cli
-
-# Render all diagrams to SVG
-for f in docs/diagrams/*.mmd; do
-  mmdc -i "$f" -o "${f%.mmd}.svg" -t dark
-done
+for f in docs/diagrams/*.mmd; do mmdc -i "$f" -o "${f%.mmd}.svg"; done
 ```
-
-## Key conventions
-
-- Synchronous (request-scoped) work is in dark blue boxes
-- Asynchronous (queue/outbox) work is in purple boxes
-- Data stores are green
-- AI providers are amber
-- Compaction is teal
-- Dashed lines indicate health/probe connections, not data flow

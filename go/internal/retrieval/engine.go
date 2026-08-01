@@ -1,10 +1,10 @@
 // Package retrieval implements the 5-signal hybrid search pipeline.
 //
 // Architecture:
-//   1. Query → embed (or cache hit)
-//   2. 3-5 parallel DB signals (vector, keyword, entity, temporal, graph)
-//   3. RRF fusion → composite ranking → diversity → token budget packing
-//   4. Return results
+//  1. Query → embed (or cache hit)
+//  2. 3-5 parallel DB signals (vector, keyword, entity, temporal, graph)
+//  3. RRF fusion → composite ranking → diversity → token budget packing
+//  4. Return results
 //
 // The ranking math runs inline in Go (fast enough for <200 candidates).
 // For batch operations (1000+ candidates), we can optionally call the Rust
@@ -59,13 +59,19 @@ func (e *Engine) Search(ctx context.Context, req *models.SearchRequest, claims *
 
 	// 1. Check cache
 	cacheKey := e.buildCacheKey(req, claims)
-	if cached, _ := e.cache.GetCached(ctx, cacheKey); cached != nil {
+	// Cache failures degrade to a normal search; malformed cached JSON is
+	// deleted so every request does not repeatedly pay the decode failure.
+	if cached, err := e.cache.GetCached(ctx, cacheKey); err != nil {
+		slog.Warn("Search cache read failed", "error", err)
+	} else if cached != nil {
 		var resp models.SearchResponse
-		if json.Unmarshal(cached, &resp) == nil {
+		if err := json.Unmarshal(cached, &resp); err == nil {
 			resp.Cached = true
 			resp.LatencyMs = time.Since(start).Milliseconds()
 			return &resp, nil
 		}
+		slog.Warn("Discarding malformed cached search response", "key", cacheKey)
+		_ = e.cache.Client.Del(ctx, cacheKey).Err()
 	}
 
 	orgID := claims.OrganizationID
@@ -230,7 +236,9 @@ func (e *Engine) Search(ctx context.Context, req *models.SearchRequest, claims *
 
 	// Cache the response
 	if data, err := json.Marshal(resp); err == nil {
-		e.cache.SetCached(ctx, cacheKey, data, 5*time.Minute)
+		if err := e.cache.SetCached(ctx, cacheKey, data, 5*time.Minute); err != nil {
+			slog.Warn("Search cache write failed", "error", err)
+		}
 	}
 	e.cache.IncrementPopular(ctx, orgID, req.Query)
 
@@ -246,10 +254,10 @@ func (e *Engine) Search(ctx context.Context, req *models.SearchRequest, claims *
 // ─── Internal Types ──────────────────────────────────────────────────────────
 
 type scores struct {
-	Semantic      float64
-	Keyword       float64
-	EntityMatch   float64
-	Temporal      float64
+	Semantic       float64
+	Keyword        float64
+	EntityMatch    float64
+	Temporal       float64
 	GraphRelevance float64
 }
 
@@ -399,9 +407,18 @@ func packByBudget(candidates []candidate, maxTokens int) []candidate {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 func (e *Engine) buildCacheKey(req *models.SearchRequest, claims *auth.Claims) string {
+	// Include every request field that can alter the response plus the complete
+	// authorization context. Omitting maxTokens/includeContent previously let a
+	// summary-only response satisfy a later full-content request.
 	data, _ := json.Marshal(map[string]any{
-		"q": req.Query, "s": req.Strategy, "k": req.TopK,
-		"org": claims.OrganizationID, "user": claims.UserID,
+		"request": req,
+		"auth": map[string]any{
+			"organizationId":   claims.OrganizationID,
+			"userId":           claims.UserID,
+			"teamIds":          claims.TeamIDs,
+			"roles":            claims.Roles,
+			"repositoryAccess": claims.RepositoryAccess,
+		},
 	})
 	hash := sha256.Sum256(data)
 	return "search:" + hex.EncodeToString(hash[:16])

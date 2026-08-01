@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:provider/provider.dart';
 import 'package:synapse_admin/pages/dashboard/dashboard_page.dart';
-import 'package:synapse_admin/services/api_service.dart';
-import 'package:synapse_admin/services/auth_service.dart';
 
 import 'helpers.dart';
 

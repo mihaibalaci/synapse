@@ -22,10 +22,10 @@ type WorkerPool struct {
 	objects  *storage.ObjectStore
 	pipeline *Pipeline
 
-	workers    int
-	queues     []string
-	stopCh     chan struct{}
-	wg         sync.WaitGroup
+	workers int
+	queues  []string
+	stopCh  chan struct{}
+	wg      sync.WaitGroup
 }
 
 // Job represents a queued processing task.
@@ -69,11 +69,11 @@ func retryDelay(attempt int) time.Duration {
 // NewWorkerPool creates a worker pool with the given concurrency.
 func NewWorkerPool(db *storage.DB, cache *storage.Cache, objects *storage.ObjectStore, workers int) *WorkerPool {
 	return &WorkerPool{
-		db:      db,
-		cache:   cache,
-		objects: objects,
+		db:       db,
+		cache:    cache,
+		objects:  objects,
 		pipeline: NewPipeline(db, cache, objects),
-		workers: workers,
+		workers:  workers,
 		queues: []string{
 			"synapse:session",
 			"synapse:facts",
@@ -107,10 +107,7 @@ func (wp *WorkerPool) run(id int) {
 	defer wp.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("Worker panicked, restarting", "id", id, "panic", r)
-			// Restart this worker
-			wp.wg.Add(1)
-			go wp.run(id)
+			slog.Error("Worker stopped after unexpected panic", "id", id, "panic", r)
 		}
 	}()
 	slog.Debug("Worker started", "id", id)

@@ -38,7 +38,7 @@ resource "aws_elasticache_subnet_group" "this" {
   subnet_ids = var.subnet_ids
 }
 
-# BullMQ state must never be evicted, so eviction is disabled explicitly.
+# Queue state must never be evicted, so eviction is disabled explicitly.
 resource "aws_elasticache_parameter_group" "this" {
   count  = local.is_aws ? 1 : 0
   name   = "recall-${var.environment}-redis7"

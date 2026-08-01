@@ -51,15 +51,15 @@ var supportedLLMProviders = map[string]bool{
 // defaultLLMSettings seeds the form before anything has been saved. Values come
 // from the environment so an operator sees whatever the process was started
 // with rather than a blank form.
-func defaultLLMSettings() LLMSettings {
-	provider := appInstance.Config.LLMProvider
+func defaultLLMSettings(app *App) LLMSettings {
+	provider := app.Config.LLMProvider
 	if provider == "" || provider == "local-none" {
 		provider = "none"
 	}
 	return LLMSettings{
 		Provider:    provider,
 		BaseURL:     envOr("LLM_BASE_URL", "http://localhost:11434"),
-		Model:       appInstance.Config.LLMModel,
+		Model:       app.Config.LLMModel,
 		Temperature: 0.2, // low: synthesis should stay close to the source material
 		MaxTokens:   1024,
 		NumThread:   4,
@@ -70,12 +70,12 @@ func defaultLLMSettings() LLMSettings {
 
 // LoadLLMSettings returns the effective configuration: the saved row if present,
 // otherwise the environment-derived defaults.
-func LoadLLMSettings(ctx context.Context) (LLMSettings, error) {
-	settings := defaultLLMSettings()
-	if appInstance == nil || appInstance.Settings == nil {
+func LoadLLMSettings(ctx context.Context, app *App) (LLMSettings, error) {
+	settings := defaultLLMSettings(app)
+	if app.Settings == nil {
 		return settings, nil
 	}
-	if _, err := appInstance.Settings.Get(ctx, llmSettingsKey, &settings); err != nil {
+	if _, err := app.Settings.Get(ctx, llmSettingsKey, &settings); err != nil {
 		return settings, err
 	}
 	return settings, nil
@@ -142,13 +142,13 @@ func (s LLMSettings) redacted() LLMSettings {
 // handleGetLLMSettings returns the current configuration with the credential
 // masked, plus the provider list and audit metadata for the UI.
 func handleGetLLMSettings(w http.ResponseWriter, r *http.Request) {
-	settings, err := LoadLLMSettings(r.Context())
+	settings, err := LoadLLMSettings(r.Context(), appFromRequest(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "SETTINGS_ERROR", err.Error())
 		return
 	}
 
-	updatedAt, updatedBy, _ := appInstance.Settings.Meta(r.Context(), llmSettingsKey)
+	updatedAt, updatedBy, _ := appFromRequest(r).Settings.Meta(r.Context(), llmSettingsKey)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"settings":  settings.redacted(),
@@ -176,7 +176,7 @@ func handlePutLLMSettings(w http.ResponseWriter, r *http.Request) {
 	// The browser only ever sees a mask, so an unchanged field means "keep the
 	// stored credential" rather than "set the key to the mask characters".
 	if incoming.APIKey == apiKeyMask || incoming.APIKey == "" {
-		if existing, err := LoadLLMSettings(r.Context()); err == nil {
+		if existing, err := LoadLLMSettings(r.Context(), appFromRequest(r)); err == nil {
 			incoming.APIKey = existing.APIKey
 		}
 	}
@@ -186,7 +186,7 @@ func handlePutLLMSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := appInstance.Settings.Set(r.Context(), llmSettingsKey, incoming, claims.UserID); err != nil {
+	if err := appFromRequest(r).Settings.Set(r.Context(), llmSettingsKey, incoming, claims.UserID); err != nil {
 		writeError(w, http.StatusInternalServerError, "SETTINGS_ERROR", err.Error())
 		return
 	}
@@ -207,7 +207,7 @@ func handlePutLLMSettings(w http.ResponseWriter, r *http.Request) {
 // The settings in the request body are used if supplied, letting the UI test
 // before saving. An omitted or masked key falls back to the stored one.
 func handleTestLLMSettings(w http.ResponseWriter, r *http.Request) {
-	settings, err := LoadLLMSettings(r.Context())
+	settings, err := LoadLLMSettings(r.Context(), appFromRequest(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "SETTINGS_ERROR", err.Error())
 		return
@@ -267,7 +267,7 @@ func handleTestLLMSettings(w http.ResponseWriter, r *http.Request) {
 // handleListLLMModels asks a self-hosted provider what it has available, so the
 // operator can pick from a list instead of typing a model name exactly.
 func handleListLLMModels(w http.ResponseWriter, r *http.Request) {
-	settings, err := LoadLLMSettings(r.Context())
+	settings, err := LoadLLMSettings(r.Context(), appFromRequest(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "SETTINGS_ERROR", err.Error())
 		return
@@ -330,9 +330,9 @@ func probeOllama(ctx context.Context, s LLMSettings) (string, error) {
 		"prompt": probePrompt,
 		"stream": false,
 		"options": map[string]any{
-			"temperature":  s.Temperature,
-			"num_predict":  16,
-			"num_thread":   s.NumThread,
+			"temperature": s.Temperature,
+			"num_predict": 16,
+			"num_thread":  s.NumThread,
 		},
 	}
 

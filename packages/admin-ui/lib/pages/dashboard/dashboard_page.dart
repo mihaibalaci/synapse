@@ -109,11 +109,18 @@ class _DashboardPageState extends State<DashboardPage> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Live Dashboard', style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                    'Live Dashboard',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const SizedBox(height: 4),
                   Text(
                     'Real-time system state, sessions, and learning activity',
-                    style: theme.textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface.withValues(alpha: 0.6)),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
                   ),
                 ],
               ),
@@ -130,7 +137,10 @@ class _DashboardPageState extends State<DashboardPage> {
                 color: colorScheme.errorContainer,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(_error!, style: TextStyle(color: colorScheme.onErrorContainer)),
+              child: Text(
+                _error!,
+                style: TextStyle(color: colorScheme.onErrorContainer),
+              ),
             ),
 
           // Main stat cards
@@ -246,14 +256,29 @@ class _DashboardPageState extends State<DashboardPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Live Sessions', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  'Live Sessions',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.blue.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Text('${sessions.length}', style: TextStyle(color: Colors.blue[300], fontSize: 12, fontWeight: FontWeight.w600)),
+                  child: Text(
+                    '${sessions.length}',
+                    style: TextStyle(
+                      color: Colors.blue[300],
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -264,9 +289,18 @@ class _DashboardPageState extends State<DashboardPage> {
                   padding: const EdgeInsets.all(32),
                   child: Column(
                     children: [
-                      Icon(Icons.inbox_rounded, size: 40, color: colorScheme.onSurface.withValues(alpha: 0.2)),
+                      Icon(
+                        Icons.inbox_rounded,
+                        size: 40,
+                        color: colorScheme.onSurface.withValues(alpha: 0.2),
+                      ),
                       const SizedBox(height: 8),
-                      Text('No recent sessions', style: TextStyle(color: colorScheme.onSurface.withValues(alpha: 0.4))),
+                      Text(
+                        'No recent sessions',
+                        style: TextStyle(
+                          color: colorScheme.onSurface.withValues(alpha: 0.4),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -291,15 +325,45 @@ class _DashboardPageState extends State<DashboardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Learning Loop', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+            Text(
+              'Learning Loop',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 4),
-            Text('Last 7 days', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurface.withValues(alpha: 0.5))),
+            Text(
+              'Last 7 days',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+              ),
+            ),
             const SizedBox(height: 20),
-            _LearningMetric(label: 'Facts Extracted', value: inline['factsExtracted'] ?? 0, color: Colors.blue),
-            _LearningMetric(label: 'Opinions Reinforced', value: inline['opinionsReinforced'] ?? 0, color: Colors.green),
-            _LearningMetric(label: 'Opinions Contradicted', value: inline['opinionsContradicted'] ?? 0, color: Colors.red),
-            _LearningMetric(label: 'Insights Written Back', value: reflect['insightsWrittenBack'] ?? 0, color: Colors.teal),
-            _LearningMetric(label: 'Sources Boosted', value: reflect['sourcesBosted'] ?? 0, color: Colors.purple),
+            _LearningMetric(
+              label: 'Facts Extracted',
+              value: inline['factsExtracted'] ?? 0,
+              color: Colors.blue,
+            ),
+            _LearningMetric(
+              label: 'Opinions Reinforced',
+              value: inline['opinionsReinforced'] ?? 0,
+              color: Colors.green,
+            ),
+            _LearningMetric(
+              label: 'Opinions Contradicted',
+              value: inline['opinionsContradicted'] ?? 0,
+              color: Colors.red,
+            ),
+            _LearningMetric(
+              label: 'Insights Written Back',
+              value: reflect['insightsWrittenBack'] ?? 0,
+              color: Colors.teal,
+            ),
+            _LearningMetric(
+              label: 'Sources Boosted',
+              value: reflect['sourcesBosted'] ?? 0,
+              color: Colors.purple,
+            ),
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 12),
@@ -310,7 +374,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 Text('Confidence', style: theme.textTheme.bodySmall),
                 Text(
                   '${((metrics?['health']?['confidenceTrend'] ?? 0) * 100).toStringAsFixed(0)}%',
-                  style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
@@ -321,7 +387,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 Text('Coverage', style: theme.textTheme.bodySmall),
                 Text(
                   '${((metrics?['health']?['observationCoverage'] ?? 0) * 100).toStringAsFixed(0)}%',
-                  style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
@@ -341,37 +409,48 @@ class _DashboardPageState extends State<DashboardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Infrastructure', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+            Text(
+              'Infrastructure',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 16),
-            ...checks.entries.map((e) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: e.value == 'ok' ? Colors.green : Colors.red,
-                          shape: BoxShape.circle,
-                        ),
+            ...checks.entries.map(
+              (e) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: e.value == 'ok' ? Colors.green : Colors.red,
+                        shape: BoxShape.circle,
                       ),
-                      const SizedBox(width: 12),
-                      Text(
-                        (e.key as String).replaceAll(RegExp(r'([A-Z])'), ' \$1').trimLeft(),
-                        style: theme.textTheme.bodyMedium,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      (e.key as String)
+                          .replaceAll(RegExp(r'([A-Z])'), ' \$1')
+                          .trimLeft(),
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                    const Spacer(),
+                    Text(
+                      e.value == 'ok' ? 'Connected' : e.value.toString(),
+                      style: TextStyle(
+                        color: e.value == 'ok'
+                            ? Colors.green[300]
+                            : Colors.red[300],
+                        fontWeight: FontWeight.w500,
+                        fontSize: 13,
                       ),
-                      const Spacer(),
-                      Text(
-                        e.value == 'ok' ? 'Connected' : e.value.toString(),
-                        style: TextStyle(
-                          color: e.value == 'ok' ? Colors.green[300] : Colors.red[300],
-                          fontWeight: FontWeight.w500,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                )),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -401,15 +480,25 @@ class _DashboardPageState extends State<DashboardPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Queue Depths', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-                Text('Total: ${queues['total'] ?? 0}', style: theme.textTheme.bodySmall),
+                Text(
+                  'Queue Depths',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  'Total: ${queues['total'] ?? 0}',
+                  style: theme.textTheme.bodySmall,
+                ),
               ],
             ),
             const SizedBox(height: 16),
-            ...queueItems.map((q) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _QueueBar(name: q.key, depth: q.value),
-                )),
+            ...queueItems.map(
+              (q) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _QueueBar(name: q.key, depth: q.value),
+              ),
+            ),
           ],
         ),
       ),
@@ -433,47 +522,86 @@ class _DashboardPageState extends State<DashboardPage> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.trending_up, size: 20, color: Colors.orange[300]),
+                    Icon(
+                      Icons.trending_up,
+                      size: 20,
+                      color: Colors.orange[300],
+                    ),
                     const SizedBox(width: 8),
-                    Text('Trending Topics', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                    Text(
+                      'Trending Topics',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ],
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.orange.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Text('${trending.length}', style: TextStyle(color: Colors.orange[300], fontSize: 12, fontWeight: FontWeight.w600)),
+                  child: Text(
+                    '${trending.length}',
+                    style: TextStyle(
+                      color: Colors.orange[300],
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 4),
             Text(
               'Topics where 3+ engineers are converging (same question, same hour)',
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurface.withValues(alpha: 0.5)),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+              ),
             ),
             const SizedBox(height: 16),
             if (trending.isEmpty)
               Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.3,
+                  ),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Center(
                   child: Column(
                     children: [
-                      Icon(Icons.explore_off, size: 32, color: theme.colorScheme.onSurface.withValues(alpha: 0.2)),
+                      Icon(
+                        Icons.explore_off,
+                        size: 32,
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.2,
+                        ),
+                      ),
                       const SizedBox(height: 8),
                       Text(
                         'No convergence detected right now',
-                        style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.4), fontSize: 13),
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface.withValues(
+                            alpha: 0.4,
+                          ),
+                          fontSize: 13,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         'When multiple engineers ask about the same topic, it will appear here',
-                        style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.3), fontSize: 11),
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface.withValues(
+                            alpha: 0.3,
+                          ),
+                          fontSize: 11,
+                        ),
                       ),
                     ],
                   ),
@@ -583,12 +711,20 @@ class _DashboardPageState extends State<DashboardPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Data Sources', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  'Data Sources',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 Row(
                   children: [
                     _SourceStatusLegend(color: Colors.green, label: 'Active'),
                     const SizedBox(width: 12),
-                    _SourceStatusLegend(color: Colors.blue, label: 'Configured'),
+                    _SourceStatusLegend(
+                      color: Colors.blue,
+                      label: 'Configured',
+                    ),
                     const SizedBox(width: 12),
                     _SourceStatusLegend(color: Colors.grey, label: 'Planned'),
                   ],
@@ -598,7 +734,9 @@ class _DashboardPageState extends State<DashboardPage> {
             const SizedBox(height: 4),
             Text(
               'Where knowledge flows into Synapse',
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurface.withValues(alpha: 0.5)),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+              ),
             ),
             const SizedBox(height: 20),
             Wrap(
@@ -635,7 +773,7 @@ class _DataSource {
 
 class _DataSourceCard extends StatelessWidget {
   final _DataSource source;
-  const _DataSourceCard({super.key, required this.source});
+  const _DataSourceCard({required this.source});
 
   @override
   Widget build(BuildContext context) {
@@ -664,7 +802,9 @@ class _DataSourceCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   source.name,
-                  style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -675,7 +815,12 @@ class _DataSourceCard extends StatelessWidget {
                   color: statusColor,
                   shape: BoxShape.circle,
                   boxShadow: source.status == 'active'
-                      ? [BoxShadow(color: statusColor.withValues(alpha: 0.5), blurRadius: 4)]
+                      ? [
+                          BoxShadow(
+                            color: statusColor.withValues(alpha: 0.5),
+                            blurRadius: 4,
+                          ),
+                        ]
                       : null,
                 ),
               ),
@@ -684,7 +829,11 @@ class _DataSourceCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             source.type,
-            style: TextStyle(fontSize: 10, color: source.color, fontWeight: FontWeight.w500),
+            style: TextStyle(
+              fontSize: 10,
+              color: source.color,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -732,9 +881,19 @@ class _TrendingTopicRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(topic['topic'] ?? '', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
-                Text('${topic['engineers'] ?? 0} engineers • ${topic['queries'] ?? 0} queries',
-                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.5))),
+                Text(
+                  topic['topic'] ?? '',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Text(
+                  '${topic['engineers'] ?? 0} engineers • ${topic['queries'] ?? 0} queries',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                  ),
+                ),
               ],
             ),
           ),
@@ -744,7 +903,14 @@ class _TrendingTopicRow extends StatelessWidget {
               color: Colors.orange.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(4),
             ),
-            child: Text('LIVE', style: TextStyle(fontSize: 10, color: Colors.orange[300], fontWeight: FontWeight.w700)),
+            child: Text(
+              'LIVE',
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.orange[300],
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
@@ -762,9 +928,21 @@ class _SourceStatusLegend extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
         const SizedBox(width: 4),
-        Text(label, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6))),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.6),
+          ),
+        ),
       ],
     );
   }
@@ -783,7 +961,9 @@ class _StatusChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: (healthy ? Colors.green : Colors.red).withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: (healthy ? Colors.green : Colors.red).withValues(alpha: 0.3)),
+        border: Border.all(
+          color: (healthy ? Colors.green : Colors.red).withValues(alpha: 0.3),
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -831,7 +1011,11 @@ class _SessionRow extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.2))),
+        border: Border(
+          bottom: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.2),
+          ),
+        ),
       ),
       child: Row(
         children: [
@@ -850,11 +1034,15 @@ class _SessionRow extends StatelessWidget {
               children: [
                 Text(
                   (session['id'] ?? '').toString().substring(0, 8),
-                  style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontFamily: 'monospace',
+                  ),
                 ),
                 Text(
                   session['developerId'] ?? '',
-                  style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onSurface.withValues(alpha: 0.5)),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurface.withValues(alpha: 0.5),
+                  ),
                 ),
               ],
             ),
@@ -862,10 +1050,15 @@ class _SessionRow extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: (statusColors[status] ?? Colors.grey).withValues(alpha: 0.1),
+              color: (statusColors[status] ?? Colors.grey).withValues(
+                alpha: 0.1,
+              ),
               borderRadius: BorderRadius.circular(4),
             ),
-            child: Text(status, style: TextStyle(fontSize: 11, color: statusColors[status])),
+            child: Text(
+              status,
+              style: TextStyle(fontSize: 11, color: statusColors[status]),
+            ),
           ),
         ],
       ),
@@ -877,7 +1070,11 @@ class _LearningMetric extends StatelessWidget {
   final String label;
   final int value;
   final Color color;
-  const _LearningMetric({required this.label, required this.value, required this.color});
+  const _LearningMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -885,10 +1082,24 @@ class _LearningMetric extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         children: [
-          Container(width: 4, height: 16, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
+          Container(
+            width: 4,
+            height: 16,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
           const SizedBox(width: 10),
-          Expanded(child: Text(label, style: Theme.of(context).textTheme.bodySmall)),
-          Text('$value', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold)),
+          Expanded(
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ),
+          Text(
+            '$value',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold),
+          ),
         ],
       ),
     );
@@ -904,11 +1115,18 @@ class _QueueBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final pct = (depth / 50).clamp(0.0, 1.0);
-    final color = depth > 20 ? Colors.amber : depth > 0 ? Colors.blue : Colors.grey.withValues(alpha: 0.3);
+    final color = depth > 20
+        ? Colors.amber
+        : depth > 0
+        ? Colors.blue
+        : Colors.grey.withValues(alpha: 0.3);
 
     return Row(
       children: [
-        SizedBox(width: 80, child: Text(name, style: theme.textTheme.bodySmall)),
+        SizedBox(
+          width: 80,
+          child: Text(name, style: theme.textTheme.bodySmall),
+        ),
         Expanded(
           child: Container(
             height: 6,
@@ -920,13 +1138,23 @@ class _QueueBar extends StatelessWidget {
               alignment: Alignment.centerLeft,
               widthFactor: pct == 0 ? 0.02 : pct, // min visible
               child: Container(
-                decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3)),
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(3),
+                ),
               ),
             ),
           ),
         ),
         const SizedBox(width: 8),
-        SizedBox(width: 24, child: Text('$depth', style: theme.textTheme.bodySmall, textAlign: TextAlign.right)),
+        SizedBox(
+          width: 24,
+          child: Text(
+            '$depth',
+            style: theme.textTheme.bodySmall,
+            textAlign: TextAlign.right,
+          ),
+        ),
       ],
     );
   }

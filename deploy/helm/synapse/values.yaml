@@ -46,10 +46,7 @@ worker:
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   env:
-    QUEUE_CONCURRENCY: "10"
-  healthPort: 3001
-  # Liveness fails if the dispatch loop has not completed within this window.
-  heartbeatStaleMs: 60000
+    WORKER_CONCURRENCY: "10"
   resources:
     requests: { cpu: 500m, memory: 1Gi }
     limits: { cpu: 2000m, memory: 4Gi }
@@ -61,7 +58,7 @@ worker:
     targetQueueDepth: "1000"
     queueMetric:
       enabled: false
-      name: bullmq_queue_depth
+      name: synapse_queue_depth
       selector: {}
 
 # Stateful services are deliberately external to this application chart.
@@ -87,11 +84,11 @@ embedding:
   provider: tei
   openai:
     model: text-embedding-3-small
-    dimensions: 1536
+    dimensions: 768
   selfHosted:
-    url: http://embedding-server:8080
-    model: synapse-compatible-1536
-    dimensions: 1536
+    url: http://embedding-server:11434
+    model: nomic-embed-text
+    dimensions: 768
 
 llm:
   provider: local-none
@@ -104,16 +101,15 @@ auth:
   issuer: https://auth.example.com
   audience: synapse
 
-# Runtime secret keys: DATABASE_URL, REDIS_URL, and one of
-# AUTH_JWT_SECRET/AUTH_JWT_PUBLIC_KEY. Provider API keys and static S3
-# credentials are optional when workload identity is used.
+# Runtime secret keys: DATABASE_URL, REDIS_URL, and AUTH_JWT_SECRET.
+# Provider API keys and static S3 credentials are optional when workload
+# identity is used.
 runtimeSecret:
   name: ""
   values:
     databaseUrl: ""
     redisUrl: ""
     authJwtSecret: ""
-    authJwtPublicKey: ""
     openaiApiKey: ""
     anthropicApiKey: ""
     awsAccessKeyId: ""
@@ -129,8 +125,6 @@ secrets:
 
 migration:
   enabled: true
-  secretName: synapse-migrator
-  secretKey: DATABASE_URL
   backoffLimit: 3
 
 embeddingBackfill:
@@ -139,7 +133,9 @@ embeddingBackfill:
   targetVersion: 1
 
 compaction:
-  enabled: true
+  # The Go compact command currently reports a no-op; keep scheduling disabled
+  # until compaction has a real implementation.
+  enabled: false
   # Weekly at 02:00 UTC on Sunday
   schedule: "0 2 * * 0"
   # "all" discovers organizations from the sessions table.

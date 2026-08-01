@@ -1,58 +1,8 @@
-%%{init: {'theme': 'base'}}%%
+flowchart LR
+  H[Helm compaction CronJob] -->|disabled by default| C[synapse compact]
+  C --> N[Logs start/complete only]
+  N --> X[No database compaction performed]
 
-flowchart TB
-    CRON["⏰ CronJob<br/>Weekly Sunday 02:00 UTC"]
-    CRON --> DISCOVER
-
-    DISCOVER["Discover organizations<br/>from sessions table"]
-    DISCOVER --> FOR_EACH
-
-    subgraph FOR_EACH["For each organization"]
-        direction TB
-        LOCK{"pg_try_advisory_lock(org)"}
-        LOCK -->|"acquired"| PHASE1
-        LOCK -->|"busy"| SKIP["Skip → next org"]
-
-        subgraph PHASE1["Phase 1: Cluster Synthesis"]
-            direction LR
-            P1_LOAD["Load clusters<br/>≥ 5 members"]
-            P1_HASH["Compute source hash<br/>from member ids"]
-            P1_CHECK{"linkedVersion<br/>= synth:hash?"}
-            P1_LLM["LLM: synthesize<br/>canonical article"]
-            P1_EMBED["Re-embed canonical<br/>1536d"]
-            P1_WRITE["Atomic: rewrite canonical<br/>demote siblings"]
-            P1_LOAD --> P1_HASH --> P1_CHECK
-            P1_CHECK -->|"yes"| P1_SKIP["Skip (idempotent)"]
-            P1_CHECK -->|"no"| P1_LLM --> P1_EMBED --> P1_WRITE
-        end
-
-        PHASE1 --> PHASE2
-
-        subgraph PHASE2["Phase 2: Fact Supersession"]
-            direction LR
-            P2_RECENT["Recent facts<br/>(last 7 days)"]
-            P2_SIM["Find similar older facts<br/>embedding ≥ 0.88<br/>entity overlap ≥ 0.5"]
-            P2_LLM["LLM: CONTRADICTS<br/>or COMPATIBLE?"]
-            P2_MARK["markSuperseded<br/>temporal_valid_until = NOW()"]
-            P2_RECENT --> P2_SIM --> P2_LLM
-            P2_LLM -->|"CONTRADICTS"| P2_MARK
-            P2_LLM -->|"COMPATIBLE"| P2_NOOP["No action"]
-        end
-
-        PHASE2 --> PHASE3
-
-        subgraph PHASE3["Phase 3: Stale Archival"]
-            direction LR
-            P3_QUERY["Query chunks:<br/>usageCount = 0<br/>age > 90 days<br/>qualityScore < 0.3<br/>not canonical"]
-            P3_ARCHIVE["confidence = 'archived'<br/>excluded from ranking"]
-            P3_QUERY --> P3_ARCHIVE
-        end
-
-        PHASE3 --> UNLOCK["pg_advisory_unlock(org)"]
-    end
-
-    UNLOCK --> SUMMARY["JSON summary to stdout<br/>{synthesized, superseded, archived, tokensSaved}"]
-
-    %% No-LLM fallback
-    NO_LLM["LLM_PROVIDER = local-none"]
-    NO_LLM -.->|"Phase 1: quality re-canonicalize only<br/>Phase 2: skipped"| PHASE1
+  P[Planned, not implemented] -.-> S[cluster synthesis]
+  P -.-> F[fact supersession]
+  P -.-> A[stale archival]

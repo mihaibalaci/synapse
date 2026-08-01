@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -21,13 +22,16 @@ import (
 	"github.com/mihaibalaci/synapse/internal/storage"
 )
 
-// appInstance holds the App reference for handlers that need DB access.
-var appInstance *App
+type appContextKey struct{}
 
 // NewRouter creates the main HTTP router with all middleware and routes.
 func NewRouter(cfg *config.Config, app *App) http.Handler {
-	appInstance = app
 	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(context.WithValue(req.Context(), appContextKey{}, app)))
+		})
+	})
 
 	// Global middleware
 	r.Use(chimw.RequestID)
@@ -41,13 +45,21 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type", "Authorization", "X-Request-ID"},
-		AllowCredentials: true,
+		AllowCredentials: false,
 		MaxAge:           300,
 	}))
 
 	// Health checks (no auth required)
 	r.Get("/health", handleHealth)
-	r.Get("/health/ready", handleHealthReady(cfg))
+	r.Get("/health/ready", handleHealthReady(app))
+
+	// Browser authentication uses a short-lived access token and a rotating,
+	// HttpOnly refresh cookie. Login is independently throttled because it is
+	// intentionally outside bearer-token middleware.
+	loginAttempts := newLoginLimiter(5, time.Minute)
+	r.Post("/api/v1/auth/login", handleAuthLogin(app, loginAttempts))
+	r.Post("/api/v1/auth/refresh", handleAuthRefresh(app))
+	r.Post("/api/v1/auth/logout", handleAuthLogout(app))
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
@@ -55,6 +67,8 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 
 		rateLimiter := middleware.NewRateLimiter(cfg.RateLimitMax, cfg.RateLimitWindow)
 		r.Use(rateLimiter.Middleware)
+
+		r.Get("/api/v1/auth/me", handleAuthMe)
 
 		// Capture endpoints
 		r.Post("/api/v1/capture/passive", CapturePassiveHandler(app))
@@ -95,18 +109,19 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 		r.Get("/api/v1/stats/trending", handleTrending)
 		r.Get("/api/v1/stats/metrics", handleMetrics)
 
-		// Admin: Users & Roles
-		r.Get("/api/v1/admin/users", handleListUsers)
-		r.Post("/api/v1/admin/users", handleCreateUser)
-		r.Put("/api/v1/admin/users/{id}", handleUpdateUser)
-		r.Delete("/api/v1/admin/users/{id}", handleDeleteUser)
-		r.Get("/api/v1/admin/roles", handleListRoles)
-
-		// Admin: runtime configuration
-		r.Get("/api/v1/admin/settings/llm", handleGetLLMSettings)
-		r.Put("/api/v1/admin/settings/llm", handlePutLLMSettings)
-		r.Post("/api/v1/admin/settings/llm/test", handleTestLLMSettings)
-		r.Get("/api/v1/admin/settings/llm/models", handleListLLMModels)
+		// Admin routes require an explicit admin role in addition to a valid JWT.
+		r.Route("/api/v1/admin", func(r chi.Router) {
+			r.Use(auth.RequireRole("admin"))
+			r.Get("/users", handleListUsers)
+			r.Post("/users", handleCreateUser)
+			r.Put("/users/{id}", handleUpdateUser)
+			r.Delete("/users/{id}", handleDeleteUser)
+			r.Get("/roles", handleListRoles)
+			r.Get("/settings/llm", handleGetLLMSettings)
+			r.Put("/settings/llm", handlePutLLMSettings)
+			r.Post("/settings/llm/test", handleTestLLMSettings)
+			r.Get("/settings/llm/models", handleListLLMModels)
+		})
 	})
 
 	return r
@@ -122,27 +137,20 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handleHealthReady(cfg *config.Config) http.HandlerFunc {
+func handleHealthReady(app *App) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Actually check dependencies — gracefully degrade
-		checks := map[string]string{
-			"database":      "unavailable",
-			"redis":         "unavailable",
-			"objectStorage": "unavailable",
-			"queue":         "ok", // In-process goroutines — always ok
+		checks := app.Healthy(r.Context())
+		allOK := true
+		for _, status := range checks {
+			if status != "ok" {
+				allOK = false
+				break
+			}
 		}
-		allOk := true
-
-		// Check PostgreSQL
-		// Note: In production, the App struct would be injected here.
-		// For now, return "ok" based on initial connection success.
-		checks["database"] = "ok"
-		checks["redis"] = "ok"
-		checks["objectStorage"] = "ok"
 
 		status := "ready"
 		httpStatus := http.StatusOK
-		if !allOk {
+		if !allOK {
 			status = "not_ready"
 			httpStatus = http.StatusServiceUnavailable
 		}
@@ -198,8 +206,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	engine := retrieval.NewEngine(
-		appInstance.DB, appInstance.Cache, appInstance.Chunks, appInstance.Facts,
-		appInstance.Embedder,
+		appFromRequest(r).DB, appFromRequest(r).Cache, appFromRequest(r).Chunks, appFromRequest(r).Facts,
+		appFromRequest(r).Embedder,
 	)
 
 	resp, err := engine.Search(r.Context(), &req, claims)
@@ -254,8 +262,8 @@ func handleGetContext(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	engine := retrieval.NewEngine(
-		appInstance.DB, appInstance.Cache, appInstance.Chunks, appInstance.Facts,
-		appInstance.Embedder,
+		appFromRequest(r).DB, appFromRequest(r).Cache, appFromRequest(r).Chunks, appFromRequest(r).Facts,
+		appFromRequest(r).Embedder,
 	)
 
 	resp, err := engine.Search(r.Context(), &req, claims)
@@ -309,9 +317,9 @@ func handleGetFacts(w http.ResponseWriter, r *http.Request) {
 		err   error
 	)
 	if len(entities) == 0 {
-		facts, err = appInstance.Facts.FindRecent(r.Context(), claims.OrganizationID, limit)
+		facts, err = appFromRequest(r).Facts.FindRecent(r.Context(), claims.OrganizationID, limit)
 	} else {
-		facts, err = appInstance.Facts.FindByEntities(r.Context(), entities, claims.OrganizationID, limit)
+		facts, err = appFromRequest(r).Facts.FindByEntities(r.Context(), entities, claims.OrganizationID, limit)
 	}
 	if err != nil {
 		RecordError("storage")
@@ -360,7 +368,7 @@ func handleGetFactHistory(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
-	history, err := appInstance.Facts.GetHistory(r.Context(), entity, claims.OrganizationID, limit)
+	history, err := appFromRequest(r).Facts.GetHistory(r.Context(), entity, claims.OrganizationID, limit)
 	if err != nil {
 		RecordError("storage")
 		writeError(w, http.StatusInternalServerError, "QUERY_ERROR", err.Error())
@@ -430,7 +438,7 @@ func handleCreateFact(w http.ResponseWriter, r *http.Request) {
 		Frameworks: []string{},
 	}
 
-	if err := appInstance.Facts.Create(r.Context(), fact); err != nil {
+	if err := appFromRequest(r).Facts.Create(r.Context(), fact); err != nil {
 		RecordError("storage")
 		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
 		return
@@ -493,7 +501,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var sessions, chunks, facts, searchIdx, clusters, knowledge, graphNodes int
 
-	row := appInstance.DB.QueryRow(ctx, `SELECT
+	row := appFromRequest(r).DB.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM sessions WHERE organization_id = $1),
 		(SELECT count(*) FROM chunks WHERE organization_id = $1),
 		(SELECT count(*) FROM memory_facts WHERE organization_id = $1),
@@ -505,7 +513,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	row.Scan(&sessions, &chunks, &facts, &searchIdx, &clusters, &knowledge, &graphNodes)
 
 	// Recent activity
-	rows, _ := appInstance.DB.Query(ctx, `
+	rows, _ := appFromRequest(r).DB.Query(ctx, `
 		SELECT id, developer_id, organization_id, searchable_status, enrichment_status,
 			total_tokens, created_at, updated_at
 		FROM sessions WHERE organization_id = $1
@@ -547,10 +555,10 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 func handleLearningStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"metrics": map[string]any{
-			"period": map[string]string{"from": "", "to": ""},
-			"inline": map[string]int{"factsExtracted": 0, "opinionsReinforced": 0},
+			"period":  map[string]string{"from": "", "to": ""},
+			"inline":  map[string]int{"factsExtracted": 0, "opinionsReinforced": 0},
 			"reflect": map[string]int{"reflectCalls": 0, "insightsWrittenBack": 0},
-			"health": map[string]any{"isLearning": false, "confidenceTrend": 0.0, "observationCoverage": 0.0},
+			"health":  map[string]any{"isLearning": false, "confidenceTrend": 0.0, "observationCoverage": 0.0},
 		},
 		"health": map[string]any{"healthy": true, "reasons": []string{}},
 		"config": map[string]any{"inlineReinforcementEnabled": true, "reflectWriteBackEnabled": true},
@@ -560,7 +568,7 @@ func handleLearningStats(w http.ResponseWriter, r *http.Request) {
 func handleLearningTrigger(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"triggered": true,
-		"result": map[string]int{"opinionsReinforced": 0, "observationsRefreshed": 0, "observationsDiscovered": 0},
+		"result":    map[string]int{"opinionsReinforced": 0, "observationsRefreshed": 0, "observationsDiscovered": 0},
 	})
 }
 
@@ -575,8 +583,8 @@ func handleTrending(w http.ResponseWriter, r *http.Request) {
 
 func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Sample live pool utilisation at scrape time.
-	if appInstance != nil && appInstance.DB != nil {
-		stat := appInstance.DB.Pool.Stat()
+	if appFromRequest(r) != nil && appFromRequest(r).DB != nil {
+		stat := appFromRequest(r).DB.Pool.Stat()
 		SetPoolStats(
 			int64(stat.AcquiredConns()),
 			int64(stat.MaxConns()),
@@ -589,19 +597,20 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Cache and object-store figures are sampled from the systems themselves at
 	// scrape time, so they reflect reality rather than in-process guesses and
 	// survive a restart of this process.
+	app := appFromRequest(r)
 	var cacheStats storage.CacheStats
-	if appInstance != nil && appInstance.Cache != nil {
-		cacheStats = appInstance.Cache.Stats(r.Context())
+	if app.Cache != nil {
+		cacheStats = app.Cache.Stats(r.Context())
 	}
 	var objectStats storage.ObjectStoreStats
-	if appInstance != nil && appInstance.Objects != nil {
-		objectStats = appInstance.Objects.Stats(r.Context())
+	if app.Objects != nil {
+		objectStats = app.Objects.Stats(r.Context())
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"cache": map[string]any{
-			"hits":        metrics.cacheHits,
-			"misses":      metrics.cacheMisses,
+			"hits":        metricValue(&metrics.cacheHits),
+			"misses":      metricValue(&metrics.cacheMisses),
 			"hitRate":     metrics.hitRate(),
 			"evictions":   cacheStats.Evicted,
 			"expired":     cacheStats.Expired,
@@ -618,35 +627,35 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 			"getErrors": objectStats.GetErrors,
 		},
 		"retrieval": map[string]any{
-			"totalQueries":   metrics.totalQueries,
+			"totalQueries":   metricValue(&metrics.totalQueries),
 			"avgLatencyMs":   avgMs,
 			"p95LatencyMs":   p95Ms,
-			"concurrentNow":  metrics.concurrent,
-			"peakConcurrent": metrics.peakConcurrent,
+			"concurrentNow":  metricValue(&metrics.concurrent),
+			"peakConcurrent": metricValue(&metrics.peakConcurrent),
 		},
 		"ingestion": map[string]any{
-			"sessionsProcessed":   metrics.sessionsProcessed,
-			"chunksCreated":       metrics.chunksCreated,
-			"factsExtracted":      metrics.factsExtracted,
-			"segmentations":       metrics.segmentations,
-			"embeddingsGenerated": metrics.embeddingsGenerated,
-			"deduplicationsRun":   metrics.deduplicationsRun,
-			"graphUpdates":        metrics.graphUpdates,
-			"searchIndexed":       metrics.searchIndexed,
+			"sessionsProcessed":   metricValue(&metrics.sessionsProcessed),
+			"chunksCreated":       metricValue(&metrics.chunksCreated),
+			"factsExtracted":      metricValue(&metrics.factsExtracted),
+			"segmentations":       metricValue(&metrics.segmentations),
+			"embeddingsGenerated": metricValue(&metrics.embeddingsGenerated),
+			"deduplicationsRun":   metricValue(&metrics.deduplicationsRun),
+			"graphUpdates":        metricValue(&metrics.graphUpdates),
+			"searchIndexed":       metricValue(&metrics.searchIndexed),
 		},
 		"storage": map[string]any{
-			"pgActiveConns": metrics.pgConns,
-			"pgMaxConns":    metrics.pgMaxConns,
-			"redisConns":    metrics.redisConns,
-			"s3Puts":        metrics.s3Puts,
-			"s3Gets":        metrics.s3Gets,
+			"pgActiveConns": metricValue(&metrics.pgConns),
+			"pgMaxConns":    metricValue(&metrics.pgMaxConns),
+			"redisConns":    metricValue(&metrics.redisConns),
+			"s3Puts":        metricValue(&metrics.s3Puts),
+			"s3Gets":        metricValue(&metrics.s3Gets),
 		},
 		"errors": map[string]any{
-			"total":     metrics.totalErrors,
-			"last5min":  metrics.recentErrors,
-			"retrieval": metrics.retrievalErrors,
-			"ingestion": metrics.ingestionErrors,
-			"storage":   metrics.storageErrors,
+			"total":     metricValue(&metrics.totalErrors),
+			"last5min":  metricValue(&metrics.recentErrors),
+			"retrieval": metricValue(&metrics.retrievalErrors),
+			"ingestion": metricValue(&metrics.ingestionErrors),
+			"storage":   metricValue(&metrics.storageErrors),
 		},
 	})
 }
@@ -679,6 +688,14 @@ func handleListRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+func appFromRequest(r *http.Request) *App {
+	app, _ := r.Context().Value(appContextKey{}).(*App)
+	if app == nil {
+		panic("api app dependency missing from request context")
+	}
+	return app
+}
 
 // splitCSV parses a comma-separated query parameter, trimming blanks.
 func splitCSV(raw string) []string {

@@ -45,39 +45,21 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
+          command: ["/usr/local/bin/synapse", "worker"]
           envFrom:
             - secretRef: { name: {{ include "synapse.runtimeSecretName" . }} }
           env:
             - { name: NODE_ENV, value: "production" }
             - { name: LOG_LEVEL, value: {{ .Values.api.env.LOG_LEVEL | quote }} }
-            - { name: QUEUE_CONCURRENCY, value: {{ .Values.worker.env.QUEUE_CONCURRENCY | quote }} }
+            - { name: WORKER_CONCURRENCY, value: {{ .Values.worker.env.WORKER_CONCURRENCY | quote }} }
             - { name: S3_BUCKET, value: {{ .Values.objectStorage.bucket | quote }} }
             - { name: S3_REGION, value: {{ .Values.objectStorage.region | quote }} }
             - { name: S3_ENDPOINT, value: {{ .Values.objectStorage.endpoint | quote }} }
             - { name: EMBEDDING_PROVIDER, value: {{ .Values.embedding.provider | quote }} }
             - { name: EMBEDDING_MODEL, value: {{ ternary .Values.embedding.openai.model .Values.embedding.selfHosted.model (eq .Values.embedding.provider "openai") | quote }} }
-            - { name: EMBEDDING_DIMENSIONS, value: "1536" }
+            - { name: EMBEDDING_DIMENSIONS, value: "768" }
             - { name: EMBEDDING_URL, value: {{ .Values.embedding.selfHosted.url | quote }} }
             - { name: LLM_PROVIDER, value: {{ .Values.llm.provider | quote }} }
             - { name: LLM_MODEL, value: {{ .Values.llm.model | default .Values.llm.selfHosted.model | default "" | quote }} }
-            - { name: LLM_URL, value: {{ .Values.llm.selfHosted.url | quote }} }
-            - { name: WORKER_HEALTH_PORT, value: {{ .Values.worker.healthPort | quote }} }
-            - { name: WORKER_HEARTBEAT_STALE_MS, value: {{ .Values.worker.heartbeatStaleMs | quote }} }
-          ports:
-            - { name: health, containerPort: {{ .Values.worker.healthPort }}, protocol: TCP }
+            - { name: LLM_BASE_URL, value: {{ .Values.llm.selfHosted.url | quote }} }
           resources: {{ toYaml .Values.worker.resources | nindent 12 }}
-          startupProbe:
-            httpGet: { path: /health/ready, port: health }
-            periodSeconds: 5
-            failureThreshold: 24
-          # A hung worker stops refreshing its dispatch heartbeat and is restarted.
-          livenessProbe:
-            httpGet: { path: /health, port: health }
-            periodSeconds: 20
-            timeoutSeconds: 5
-            failureThreshold: 3
-          readinessProbe:
-            httpGet: { path: /health/ready, port: health }
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3

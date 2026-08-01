@@ -1,0 +1,25 @@
+[Unit]
+Description=Synapse ingestion worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=synapse
+Group=synapse
+EnvironmentFile=/etc/synapse/synapse.env
+ExecStart=/usr/local/bin/synapse worker
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=330
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/synapse
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

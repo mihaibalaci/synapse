@@ -33,8 +33,8 @@ func NewEmbeddingClient() *EmbeddingClient {
 
 	return &EmbeddingClient{
 		provider:   envOr("EMBEDDING_PROVIDER", "local"),
-		model:      envOr("EMBEDDING_MODEL", "synapse-local-1536"),
-		dimensions: envIntOr("EMBEDDING_DIMENSIONS", 1536),
+		model:      envOr("EMBEDDING_MODEL", "nomic-embed-text"),
+		dimensions: envIntOr("EMBEDDING_DIMENSIONS", 768),
 		url:        envOr("EMBEDDING_URL", "http://localhost:11434"),
 		apiKey:     os.Getenv("OPENAI_API_KEY"),
 		numThread:  threads,
@@ -70,29 +70,59 @@ func (e *EmbeddingClient) EmbedBatch(ctx context.Context, texts []string) ([][]f
 		}
 	}
 
+	var (
+		embeddings [][]float64
+		err        error
+	)
 	switch e.provider {
 	case "openai":
-		return e.callOpenAI(ctx, texts)
+		embeddings, err = e.callOpenAI(ctx, texts)
 	case "ollama":
-		return e.callOllama(ctx, texts)
+		embeddings, err = e.callOllama(ctx, texts)
 	case "tei":
-		return e.callTEI(ctx, texts)
+		embeddings, err = e.callTEI(ctx, texts)
 	case "local":
-		return e.generateLocal(texts), nil
+		embeddings = e.generateLocal(texts)
 	default:
-		return e.generateLocal(texts), nil
+		return nil, fmt.Errorf("unsupported embedding provider %q", e.provider)
 	}
+	if err != nil {
+		return nil, err
+	}
+	if len(embeddings) != len(texts) {
+		return nil, fmt.Errorf("embedding provider returned %d vectors for %d inputs", len(embeddings), len(texts))
+	}
+	for i, vector := range embeddings {
+		if len(vector) != e.dimensions {
+			return nil, fmt.Errorf("embedding %d has %d dimensions; expected %d", i, len(vector), e.dimensions)
+		}
+		for _, value := range vector {
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return nil, fmt.Errorf("embedding %d contains a non-finite value", i)
+			}
+		}
+	}
+	return embeddings, nil
 }
 
 func (e *EmbeddingClient) callOpenAI(ctx context.Context, texts []string) ([][]float64, error) {
+	if e.apiKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY is required for the openai embedding provider")
+	}
 	body := map[string]any{
 		"model":      e.model,
 		"input":      texts,
 		"dimensions": e.dimensions,
 	}
-	data, _ := json.Marshal(body)
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode openai request: %w", err)
+	}
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/embeddings", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/embeddings", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("create openai request: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+e.apiKey)
 
@@ -102,8 +132,11 @@ func (e *EmbeddingClient) callOpenAI(ctx context.Context, texts []string) ([][]f
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return nil, fmt.Errorf("openai read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("openai %d: %s", resp.StatusCode, string(respBody[:min(200, len(respBody))]))
 	}
 
@@ -112,7 +145,9 @@ func (e *EmbeddingClient) callOpenAI(ctx context.Context, texts []string) ([][]f
 			Embedding []float64 `json:"embedding"`
 		} `json:"data"`
 	}
-	json.Unmarshal(respBody, &result)
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("openai decode: %w", err)
+	}
 
 	embeddings := make([][]float64, len(result.Data))
 	for i, d := range result.Data {
@@ -177,19 +212,35 @@ func (e *EmbeddingClient) callOllama(ctx context.Context, texts []string) ([][]f
 
 func (e *EmbeddingClient) callTEI(ctx context.Context, texts []string) ([][]float64, error) {
 	body := map[string]any{"inputs": texts, "truncate": true}
-	data, _ := json.Marshal(body)
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode tei request: %w", err)
+	}
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", e.url+"/embed", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.url+"/embed", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("create tei request: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tei embed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return nil, fmt.Errorf("tei read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tei %d: %s", resp.StatusCode, string(payload[:min(300, len(payload))]))
+	}
+
 	var embeddings [][]float64
-	json.NewDecoder(resp.Body).Decode(&embeddings)
+	if err := json.Unmarshal(payload, &embeddings); err != nil {
+		return nil, fmt.Errorf("tei decode: %w", err)
+	}
 	return embeddings, nil
 }
 

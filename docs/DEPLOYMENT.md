@@ -1,273 +1,75 @@
-# Deployment Guide
+# Deployment
 
-Recall is a service with three mandatory stateful dependencies and two stateless
-workloads.
+## Supported topologies
 
-| Component | Role |
-|-----------|------|
-| PostgreSQL 16 + pgvector | Vectors, full-text search, relational knowledge graph, outbox, RLS |
-| Redis | BullMQ queues and search cache, `maxmemory-policy=noeviction` |
-| S3-compatible object storage | Immutable raw session payloads |
-| API (`dist/index.js`) | Upload, retrieval, facts, feedback |
-| Worker (`dist/worker-entry.js`) | Pipeline, enrichment, search indexing, outbox dispatch |
-
-OpenSearch and Neo4j are **not** used. PostgreSQL FTS/`pg_trgm` and the
-relational `graph_nodes`/`graph_edges` tables replaced them.
-
----
-
-## Deployment Methods
-
-| Method | For | Tools |
-|--------|-----|-------|
-| Docker Compose | Local dev / single machine | Docker |
-| Helm chart | Any Kubernetes cluster | Helm 3 |
-| Terraform + Helm | AWS/GCP with managed data services | Terraform 1.8+, Helm 3 |
-
-The application Helm chart deploys **only** the API, worker, and their
-migration/backfill Jobs. PostgreSQL, Redis, object storage, and model serving
-are separate lifecycle domains: use managed services or deploy Patroni/Redis/
-MinIO independently. `postgresql.mode=internal` and `redis.mode=internal` are
-rejected by the chart rather than silently rendering nothing.
-
----
-
-## Prerequisites for every environment
-
-Provide these in the runtime secret (`runtimeSecret.name`, default
-`<release>-runtime`), either directly (`secrets.provider=env`), from an existing
-secret (`existing`), or via External Secrets (`external-secrets`):
-
-| Key | Required | Notes |
-|-----|----------|-------|
-| `DATABASE_URL` | yes | Runtime role, **not** the migrator role |
-| `REDIS_URL` | yes | Use `rediss://` when TLS is enabled |
-| `AUTH_JWT_SECRET` or `AUTH_JWT_PUBLIC_KEY` | yes in production | HS256 secret (min 32 chars) or RS256 public key; the API refuses to start in production without one |
-| `OPENAI_API_KEY` | if `embedding.provider=openai` | |
-| `ANTHROPIC_API_KEY` | if `llm.provider=claude` | |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | only without workload identity | Prefer IRSA / GKE Workload Identity |
-
-A separate migrator secret (`migration.secretName`, default `synapse-migrator`)
-holds the elevated `DATABASE_URL` used by the migration Job only.
-
-Embeddings are fixed at **1536 dimensions** for every provider. The chart fails
-rendering if a profile sets anything else, and the service refuses to start.
-
----
-
-## Option 1: On-premises Kubernetes
-
-```bash
-# 1. Build and push images with immutable tags (latest is rejected by the chart)
-docker build -f infra/docker/Dockerfile.api -t registry.internal/synapse/api:0.1.0 .
-docker build -f infra/docker/Dockerfile.worker -t registry.internal/synapse/worker:0.1.0 .
-docker build -f deploy/patroni/Dockerfile -t registry.internal/synapse/patroni:0.1.0 deploy/patroni/
-docker push registry.internal/synapse/api:0.1.0   # repeat for worker, patroni
-
-# 2. Deploy Patroni, Redis, and MinIO first, then create the two secrets
-#    (synapse-runtime and synapse-migrator).
-
-# 3. Deploy the service
-helm install synapse ./deploy/helm/synapse \
-  -f ./deploy/helm/synapse/profiles/on-prem.yaml \
-  --set global.imageRegistry=registry.internal \
-  --namespace synapse --create-namespace
-```
-
-Air-gapped: pre-pull `synapse/api`, `synapse/worker`, `pgvector/pgvector:0.8.1-pg16`,
-`redis:7.4.2-alpine`, `minio/minio`, and your embedding server image. Any
-embedding model may be used **provided it emits 1536 dimensions**.
-
----
-
-## Option 2 and 3: AWS or GCP
-
-```bash
-cd deploy/terraform
-terraform init
-terraform validate
-terraform plan -var-file=environments/aws-prod.tfvars   # or gcp-prod.tfvars
-terraform apply -var-file=environments/aws-prod.tfvars
-```
-
-Terraform provisions network, managed PostgreSQL, Redis with `noeviction`,
-private object storage, the Kubernetes cluster, and the workload identity that
-the Helm `serviceAccount` binds to. It does **not** install extensions or schema;
-migrations own that.
-
-Database credentials are never written to Terraform state: AWS uses
-`manage_master_user_password` and GCP writes to Secret Manager. Feed those into
-the runtime and migrator secrets, then deploy Helm with the matching profile.
-
----
-
-## Database migrations
-
-Migrations are ordered SQL files in `migrations/`, applied by
-`scripts/migrate.mjs`:
-
-- one advisory lock, so concurrent runners cannot race
-- checksummed in `schema_migrations`; editing an applied file is an error
-- each file applied in a single transaction with a `lock_timeout`
-- pre-existing databases are baselined at `001` and converged by `002`
-- re-running is a no-op
-
-They run as a Helm `pre-install,pre-upgrade` hook Job using the migrator
-credential. Migrations do **not** run on API or worker startup.
-
-```bash
-# Manual / out-of-band
-MIGRATION_DATABASE_URL=postgresql://synapse_migrator:...@host/synapse npm run migrate
-```
-
-**`helm rollback` does not revert schema.** Use expand/contract: deploy the
-additive migration, then the code, and only remove columns in a later release.
-
-### Embedding backfill
-
-Changing embedding model or version requires re-embedding. The backfill is
-resumable, advisory-locked, and batched:
-
-```bash
-EMBEDDING_VERSION=2 BACKFILL_BATCH_SIZE=50 npm run backfill:embeddings
-```
-
-Or enable the Job: `--set embeddingBackfill.enabled=true --set embeddingBackfill.targetVersion=2`.
-
----
-
-## Knowledge compaction
-
-A weekly CronJob (`synapse-compaction`) reduces token usage over time through
-three phases:
-
-1. **Cluster synthesis** — clusters with ≥5 members are synthesized into one
-   canonical article via the configured LLM. The canonical is re-embedded and
-   siblings are demoted. Idempotent via a source hash stored in `linkedVersion`.
-2. **Fact supersession** — recent facts are compared against older facts for
-   semantic contradiction (LLM-judged). Contradicted facts get
-   `temporal_valid_until` and are excluded from default queries.
-3. **Stale archival** — old, unused, low-quality, non-canonical chunks are set
-   to `confidence = 'archived'` and drop out of search ranking.
-
-Without an LLM (`LLM_PROVIDER=local-none`), only quality re-canonicalization
-and pruning run — the service degrades gracefully rather than crashing.
-
-Configuration in `values.yaml`:
-
-```yaml
-compaction:
-  enabled: true
-  schedule: "0 2 * * 0"       # Weekly at 02:00 UTC on Sunday
-  organizations: "all"         # or comma-separated org ids
-  maxClusters: 50              # per org per run
-  maxPrune: 500                # per org per run
-  archiveDays: 90              # usage threshold
-  backoffLimit: 2
-  activeDeadlineSeconds: 3600  # kill if it exceeds 1 hour
-```
-
-Manual trigger:
-
-```bash
-kubectl create job --from=cronjob/synapse-compaction compaction-manual-$(date +%s)
-```
-
-Per-organization advisory locking ensures concurrent pods cannot collide; a
-locked org is skipped and retried on the next schedule.
-
----
-
-## Performance and capacity
-
-Measured on a 221-chunk corpus, one API process, cache cleared between runs
-(`npm run load:retrieval`):
-
-| Concurrency | p50 | p95 | p99 | rps |
-|---|---|---|---|---|
-| 1 | 10.2ms | 13.1ms | 17.7ms | 95 |
-| 8 | 40.0ms | 61.1ms | 76.1ms | 195 |
-| 16 | 80.4ms | 113.1ms | 138.1ms | 198 |
-| warm cache | 8.1ms | 12.8ms | — | ~1830 |
-
-Throughput saturates near **198 rps per API process**. Past that, added latency
-is event-loop queueing rather than work, so plan capacity in replicas and size
-the HPA accordingly. Retrieval latency is unmeasured at production corpus size;
-treat these as a floor, not a guarantee.
-
-Optional tuning:
-
-| Variable | Default | Effect |
+| Topology | Application | Stateful services |
 |---|---|---|
-| `EMBEDDING_CACHE_MAX` | `2000` | In-process LRU for query embeddings. Set `0` to disable. Matters most with a remote provider. |
-| `RATE_LIMIT_MAX` | `100` | Per-identity request budget. Raise **only** for local load testing, or the limiter becomes what you measure. |
+| Native single server | systemd API/worker + nginx | local or external PostgreSQL, Redis, MinIO, Ollama |
+| Docker Compose | Go API/worker + Flutter nginx | container PostgreSQL, Redis, MinIO; external Ollama by default |
+| Kubernetes | Helm API/worker/migration/backfill jobs | separately managed PostgreSQL, Redis, S3, model provider |
 
-## Health and probes
+Native installation is documented in [INSTALLATION.md](INSTALLATION.md).
 
-| Workload | Liveness | Readiness |
-|----------|----------|-----------|
-| API | `GET /health` | `GET /health/ready` — checks PostgreSQL, Redis, bucket, queue; returns 503 when any fails |
-| Worker | `GET :3001/health` — fails if the outbox dispatch loop has not completed within `worker.heartbeatStaleMs` | `GET :3001/health/ready` — same dependency checks |
+## Mandatory runtime configuration
 
-On `SIGTERM` the worker fails its health checks first, then drains in-flight
-jobs before closing queues and the pool.
+- `DATABASE_URL`
+- `REDIS_URL`
+- `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`
+- S3 credentials unless workload identity supplies them
+- `EMBEDDING_PROVIDER`, `EMBEDDING_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS=768`
+- `AUTH_JWT_SECRET` (at least 32 characters), `AUTH_ISSUER`, `AUTH_AUDIENCE`
 
----
+API and worker startup verify the embedded migration ledger. Deploy in this order:
 
-## Configuration knobs
+1. Back up PostgreSQL and object-store configuration.
+2. Deploy/provision PostgreSQL, Redis, S3, and embedding provider.
+3. Run the new binary as `synapse migrate` with the target `DATABASE_URL`.
+4. If migration changed an incompatible vector space, run `synapse embed-backfill`.
+5. Roll API, then workers.
+6. Check readiness, queue depth, dead letters, and a capture/search smoke test.
 
-| Knob | Options | Effect |
-|------|---------|--------|
-| `secrets.provider` | `env` / `existing` / `external-secrets` | How the runtime secret is produced |
-| `objectStorage.provider` | `minio` / `s3` / `gcs-s3-interop` / `ceph` | S3-API backend. GCS requires HMAC interop keys |
-| `embedding.provider` | `openai` / `ollama` / `vllm` / `tei` / `local` | Must emit 1536 dimensions. `local` is dev/test only |
-| `llm.provider` | `claude` / `openai` / `ollama` / `vllm` / `local-none` | `local-none` disables Tier 2 LLM extraction |
-| `migration.enabled` | `true` / `false` | Pre-upgrade migration Job |
-| `worker.autoscaling.queueMetric.enabled` | `true` / `false` | Scale on queue depth via an external metric (KEDA/adapter) instead of CPU |
-| `availability.podDisruptionBudget.enabled` | `true` / `false` | PDBs for API and worker |
-| `networkPolicy.enabled` | `true` / `false` | Restrict API ingress; deny all worker ingress |
-| `serviceMesh.enabled` | `true` / `false` | Istio mTLS, outlier detection, worker ingress deny |
+Schema rollback is not automatic. Restore the database backup and matching binary if rollback is required.
 
----
+## Helm
 
-## High availability
+The chart deploys application workloads only. Stateful services remain external lifecycle domains.
 
-**PostgreSQL (on-prem):** Patroni with `synchronous_mode` and
-`synchronous_mode_strict` enabled, SCRAM-SHA-256, TLS with client certificate
-verification, REST API authentication, and WAL archiving via pgBackRest.
-
-```
-deploy/patroni/
-├── patroni.yaml      # cluster config; all credentials/paths injected via env
-├── pgbackrest.conf   # WAL archive + retention; repository injected via PGBACKREST_*
-├── post-init.sh      # creates synapse database, synapse_migrator and synapse_app roles, extensions
-└── Dockerfile        # postgres 16.9 + pgvector + pinned Patroni + pgBackRest
+```bash
+helm lint deploy/helm/synapse
+helm template synapse deploy/helm/synapse \
+  -f deploy/helm/synapse/profiles/on-prem.yaml \
+  --set secrets.provider=existing \
+  --set runtimeSecret.name=synapse-runtime
 ```
 
-`post-init.sh` requires `RECALL_APP_PASSWORD` and `RECALL_MIGRATOR_PASSWORD`.
-`pgbackrest.conf` has **no repository configured by default** — set
-`PGBACKREST_REPO1_*` before claiming any RPO/RTO.
+The runtime secret must contain `DATABASE_URL`, `REDIS_URL`, `AUTH_JWT_SECRET`, and object-store credentials where workload identity is unavailable. The migration hook uses the same runtime secret and runs `/usr/local/bin/synapse migrate`. Use a separately scoped release/secret if your organization requires elevated DDL credentials.
 
-**Redis:** `noeviction` is mandatory. BullMQ state must never be evicted.
+The worker has no HTTP health endpoint; Kubernetes observes process liveness. The API has `/health` and dependency-aware `/health/ready`. Compaction is disabled because the Go `compact` command is currently a no-op.
 
-**API:** minimum 3 replicas, PDB, topology spread across zones and hosts, HPA
-on CPU/memory, `maxUnavailable: 0` during rollout.
+## Docker Compose
 
----
+```bash
+cp infra/docker/.env.example .env
+# replace every example secret
 
-## Not yet implemented
+docker compose -f infra/docker/docker-compose.yml config
+docker compose -f infra/docker/docker-compose.yml up --build -d
+```
 
-Do not assume these exist:
+Compose uses pinned PostgreSQL/Redis/MinIO images and runs migrations before API/worker startup. Keep the admin UI private and provide JWT authentication through your reverse proxy or browser client.
 
-- **No metrics or tracing.** There is no `/metrics` endpoint and no
-  OpenTelemetry SDK. `OTEL_EXPORTER_OTLP_ENDPOINT` is not consumed by any code.
-  Latency and queue-depth SLOs cannot currently be measured or alerted on.
-- **No terminal-failure surface.** Outbox events go `failed` after 10 attempts
-  and `chunk_processing_status` rows can end `failed`; nothing alerts on or
-  drains them.
-- **No ingestion backpressure.** Uploads are accepted with 202 without
-  per-tenant quotas or queue-depth admission control. Combined with
-  `noeviction`, a sustained burst can exhaust Redis memory and fail writes.
-- **No load test.** Retrieval latency at target volume is unmeasured.
-- **No failover or restore drill.** Patroni failover and pgBackRest restore have
-  never been exercised.
+## Redis durability
+
+Redis carries both disposable cache and queue state. Configure persistence and backups for queue durability. The current worker uses destructive `BRPOP`, so a crash after dequeue relies on PostgreSQL/session recovery. `noeviction` protects queued jobs but makes memory exhaustion a write outage; monitor memory and queue depth.
+
+## Object storage
+
+Raw objects are the only verbatim source. Enable bucket versioning, encryption, access logging, and lifecycle/replication appropriate to your recovery objectives. `synapse verify-storage` checks pointers but does not repair missing objects.
+
+## Secrets
+
+The native installer writes mode-0600 files. Helm supports existing secrets or External Secrets. LLM settings saved in the admin UI mask keys over HTTP but persist them as plaintext JSONB; for production prefer a secret manager integration or restrict that feature/database access.
+
+## Capacity and observability
+
+Do not rely on old benchmark numbers as production SLOs. Measure with your corpus/model. The JSON metrics endpoint mixes process-local counters with Redis-backed/sampled values and is not Prometheus. There is no OpenTelemetry integration yet.

@@ -53,6 +53,7 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
+          command: ["/usr/local/bin/synapse", "serve"]
           ports:
             - { name: http, containerPort: {{ .Values.api.port }}, protocol: TCP }
           envFrom:
@@ -66,11 +67,11 @@ spec:
             - { name: S3_ENDPOINT, value: {{ .Values.objectStorage.endpoint | quote }} }
             - { name: EMBEDDING_PROVIDER, value: {{ .Values.embedding.provider | quote }} }
             - { name: EMBEDDING_MODEL, value: {{ ternary .Values.embedding.openai.model .Values.embedding.selfHosted.model (eq .Values.embedding.provider "openai") | quote }} }
-            - { name: EMBEDDING_DIMENSIONS, value: "1536" }
+            - { name: EMBEDDING_DIMENSIONS, value: "768" }
             - { name: EMBEDDING_URL, value: {{ .Values.embedding.selfHosted.url | quote }} }
             - { name: LLM_PROVIDER, value: {{ .Values.llm.provider | quote }} }
             - { name: LLM_MODEL, value: {{ .Values.llm.model | default .Values.llm.selfHosted.model | default "" | quote }} }
-            - { name: LLM_URL, value: {{ .Values.llm.selfHosted.url | quote }} }
+            - { name: LLM_BASE_URL, value: {{ .Values.llm.selfHosted.url | quote }} }
             - { name: AUTH_ISSUER, value: {{ .Values.auth.issuer | quote }} }
             - { name: AUTH_AUDIENCE, value: {{ .Values.auth.audience | quote }} }
             {{- if .Values.observability.otel.enabled }}

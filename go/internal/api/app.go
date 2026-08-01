@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/mihaibalaci/synapse/internal/auth"
 	"github.com/mihaibalaci/synapse/internal/config"
 	"github.com/mihaibalaci/synapse/internal/ingestion"
 	"github.com/mihaibalaci/synapse/internal/storage"
@@ -22,6 +23,7 @@ type App struct {
 	Facts    *storage.FactRepo
 	Stats    *storage.StatsRepo
 	Settings *storage.SettingsRepo
+	Auth     *auth.Service
 
 	// Embedder generates vectors for chunk content and search queries.
 	Embedder *ingestion.EmbeddingClient
@@ -31,6 +33,10 @@ type App struct {
 func NewApp(ctx context.Context, cfg *config.Config) (*App, error) {
 	db, err := storage.ConnectWithRetry(ctx, cfg.DatabaseURL, storage.DefaultRetry)
 	if err != nil {
+		return nil, err
+	}
+	if err := db.CheckMigrations(ctx); err != nil {
+		db.Close()
 		return nil, err
 	}
 
@@ -56,6 +62,7 @@ func NewApp(ctx context.Context, cfg *config.Config) (*App, error) {
 		Facts:    storage.NewFactRepo(db),
 		Stats:    storage.NewStatsRepo(db),
 		Settings: storage.NewSettingsRepo(db),
+		Auth:     auth.NewService(db, cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.AuthAccessTTL, cfg.AuthRefreshTTL),
 		Embedder: ingestion.NewEmbeddingClient(),
 	}
 

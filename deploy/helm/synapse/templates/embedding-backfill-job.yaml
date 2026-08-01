@@ -20,7 +20,7 @@ spec:
       containers:
         - name: backfill
           image: {{ include "synapse.image" (dict "root" . "image" .Values.worker.image) | quote }}
-          command: ["node", "scripts/backfill-embeddings.mjs"]
+          command: ["/usr/local/bin/synapse", "embed-backfill"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -33,7 +33,7 @@ spec:
                 secretKeyRef: { name: {{ .Values.migration.secretName }}, key: {{ .Values.migration.secretKey }} }
             - { name: EMBEDDING_PROVIDER, value: {{ .Values.embedding.provider | quote }} }
             - { name: EMBEDDING_MODEL, value: {{ ternary .Values.embedding.openai.model .Values.embedding.selfHosted.model (eq .Values.embedding.provider "openai") | quote }} }
-            - { name: EMBEDDING_DIMENSIONS, value: "1536" }
+            - { name: EMBEDDING_DIMENSIONS, value: "768" }
             - { name: EMBEDDING_URL, value: {{ .Values.embedding.selfHosted.url | quote }} }
             - { name: EMBEDDING_VERSION, value: {{ .Values.embeddingBackfill.targetVersion | quote }} }
             - { name: BACKFILL_BATCH_SIZE, value: {{ .Values.embeddingBackfill.batchSize | quote }} }

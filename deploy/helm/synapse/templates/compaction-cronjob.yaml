@@ -28,7 +28,7 @@ spec:
             - name: compaction
               image: {{ include "synapse.image" (dict "root" . "image" .Values.worker.image) | quote }}
               imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
-              command: ["node", "dist/compaction-entry.js"]
+              command: ["/usr/local/bin/synapse", "compact"]
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -40,11 +40,11 @@ spec:
                 - { name: LOG_LEVEL, value: {{ .Values.api.env.LOG_LEVEL | quote }} }
                 - { name: EMBEDDING_PROVIDER, value: {{ .Values.embedding.provider | quote }} }
                 - { name: EMBEDDING_MODEL, value: {{ ternary .Values.embedding.openai.model .Values.embedding.selfHosted.model (eq .Values.embedding.provider "openai") | quote }} }
-                - { name: EMBEDDING_DIMENSIONS, value: "1536" }
+                - { name: EMBEDDING_DIMENSIONS, value: "768" }
                 - { name: EMBEDDING_URL, value: {{ .Values.embedding.selfHosted.url | quote }} }
                 - { name: LLM_PROVIDER, value: {{ .Values.llm.provider | quote }} }
                 - { name: LLM_MODEL, value: {{ .Values.llm.model | default .Values.llm.selfHosted.model | default "" | quote }} }
-                - { name: LLM_URL, value: {{ .Values.llm.selfHosted.url | quote }} }
+                - { name: LLM_BASE_URL, value: {{ .Values.llm.selfHosted.url | quote }} }
                 - { name: COMPACTION_ORGANIZATIONS, value: {{ .Values.compaction.organizations | quote }} }
                 - { name: COMPACTION_MAX_CLUSTERS, value: {{ .Values.compaction.maxClusters | quote }} }
                 - { name: COMPACTION_MAX_PRUNE, value: {{ .Values.compaction.maxPrune | quote }} }

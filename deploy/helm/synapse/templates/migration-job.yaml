@@ -24,17 +24,13 @@ spec:
         - name: migrate
           image: {{ include "synapse.image" (dict "root" . "image" .Values.api.image) | quote }}
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
-          command: ["node", "scripts/migrate.mjs"]
+          command: ["/usr/local/bin/synapse", "migrate"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
-          env:
-            - name: MIGRATION_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.migration.secretName }}
-                  key: {{ .Values.migration.secretKey }}
+          envFrom:
+            - secretRef: { name: {{ include "synapse.runtimeSecretName" . }} }
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits: { cpu: 500m, memory: 512Mi }

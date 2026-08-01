@@ -23,11 +23,13 @@ import (
 	"time"
 
 	"github.com/mihaibalaci/synapse/internal/api"
+	"github.com/mihaibalaci/synapse/internal/auth"
 	"github.com/mihaibalaci/synapse/internal/cli"
 	"github.com/mihaibalaci/synapse/internal/config"
 	"github.com/mihaibalaci/synapse/internal/ingestion"
 	"github.com/mihaibalaci/synapse/internal/mcp"
 	"github.com/mihaibalaci/synapse/internal/slack"
+	"github.com/mihaibalaci/synapse/internal/storage"
 )
 
 func main() {
@@ -56,6 +58,10 @@ func main() {
 		runMCP(cfg)
 	case "slack":
 		runSlack()
+	case "migrate":
+		runMigrate(cfg)
+	case "auth-bootstrap":
+		runAuthBootstrap(cfg)
 	case "verify-storage":
 		runVerifyStorage(cfg)
 	case "embed-backfill":
@@ -63,8 +69,65 @@ func main() {
 	case "search", "facts", "history", "reflect", "insight", "status":
 		cli.Run(os.Args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: synapse [serve|worker|compact|mcp|slack|verify-storage|embed-backfill|search|facts|history|reflect|insight|status]\n", mode)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: synapse [serve|worker|migrate|auth-bootstrap|compact|mcp|slack|verify-storage|embed-backfill|search|facts|history|reflect|insight|status]\n", mode)
 		os.Exit(1)
+	}
+}
+
+// runMigrate applies the schema embedded in this binary. Deployment tooling
+// runs this explicitly before starting API or worker processes.
+func runMigrate(cfg *config.Config) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	db, err := storage.ConnectWithRetry(ctx, cfg.DatabaseURL, storage.DefaultRetry)
+	if err != nil {
+		slog.Error("Could not connect for migrations", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	if err := db.RunMigrations(ctx); err != nil {
+		slog.Error("Migration failed", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("Database migrations are current")
+}
+
+// runAuthBootstrap creates the first administrator for an organization. The
+// password is accepted only through the process environment so it never appears
+// in command arguments or logs.
+func runAuthBootstrap(cfg *config.Config) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	db, err := storage.ConnectWithRetry(ctx, cfg.DatabaseURL, storage.DefaultRetry)
+	if err != nil {
+		slog.Error("Could not connect for auth bootstrap", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+	if err := db.CheckMigrations(ctx); err != nil {
+		slog.Error("Authentication schema is not current", "error", err)
+		os.Exit(1)
+	}
+
+	service := auth.NewService(db, cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.AuthAccessTTL, cfg.AuthRefreshTTL)
+	email := os.Getenv("AUTH_BOOTSTRAP_EMAIL")
+	password := os.Getenv("AUTH_BOOTSTRAP_PASSWORD")
+	organizationID := os.Getenv("AUTH_BOOTSTRAP_ORGANIZATION_ID")
+	if organizationID == "" {
+		organizationID = "default"
+	}
+	created, err := service.BootstrapAdmin(ctx, email, password, os.Getenv("AUTH_BOOTSTRAP_DISPLAY_NAME"), organizationID)
+	if err != nil {
+		slog.Error("Authentication bootstrap failed", "error", err)
+		os.Exit(1)
+	}
+	if created {
+		slog.Info("Initial administrator created", "email", email, "organization_id", organizationID)
+	} else {
+		slog.Info("Authentication bootstrap skipped because the organization already has users", "organization_id", organizationID)
 	}
 }
 
@@ -130,6 +193,10 @@ func runEmbedBackfill(cfg *config.Config) {
 }
 
 func runServer(cfg *config.Config) {
+	if err := cfg.ValidateAPI(); err != nil {
+		slog.Error("Invalid API configuration", "error", err)
+		os.Exit(1)
+	}
 	// Initialize app with storage connections
 	ctx := context.Background()
 	app, err := api.NewApp(ctx, cfg)
@@ -175,6 +242,10 @@ func runServer(cfg *config.Config) {
 
 // runWorker consumes queued ingestion jobs and recovers stranded sessions.
 func runWorker(cfg *config.Config) {
+	if err := cfg.ValidateRuntime(); err != nil {
+		slog.Error("Invalid worker configuration", "error", err)
+		os.Exit(1)
+	}
 	slog.Info("Synapse Worker starting", "env", cfg.Environment)
 
 	ctx := context.Background()

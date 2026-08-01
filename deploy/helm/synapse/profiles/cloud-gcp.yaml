@@ -7,14 +7,14 @@ redis: { mode: managed, host: "memorystore.private.example", port: 6379, tls: tr
 objectStorage: { provider: gcs-s3-interop, bucket: synapse-raw-prod, region: us-central1, endpoint: "https://storage.googleapis.com" }
 embedding:
   provider: openai
-  openai: { model: text-embedding-3-small, dimensions: 1536 }
-llm: { provider: claude, model: claude-sonnet-4-20250514, selfHosted: { url: "", model: "" } }
+  openai: { model: text-embedding-3-small, dimensions: 768 }
+llm: { provider: anthropic, model: claude-sonnet-4-20250514, selfHosted: { url: "", model: "" } }
 auth: { issuer: "https://auth.example.com", audience: synapse }
 runtimeSecret: { name: synapse-runtime }
 secrets:
   provider: external-secrets
   externalSecrets: { secretStore: gcp-secret-manager, secretStoreKind: ClusterSecretStore, remoteKey: synapse-prod-runtime, refreshInterval: 1h }
-migration: { enabled: true, secretName: synapse-migrator, secretKey: DATABASE_URL, backoffLimit: 3 }
+migration: { enabled: true, backoffLimit: 3 }
 api:
   ingress:
     className: gce

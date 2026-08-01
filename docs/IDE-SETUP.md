@@ -1,216 +1,57 @@
-# Connecting Your IDE to the Recall
+# IDE and MCP Setup
 
-## Overview
+The Go binary runs an MCP stdio server and forwards tools to the HTTP API.
 
-Developers connect their IDEs via two mechanisms:
+## Prerequisites
 
-| Mechanism | How it works | What it enables |
-|-----------|-------------|-----------------|
-| **MCP Server** | AI agent has tools to search/save knowledge | Retrieval + active capture (agent-driven) |
-| **Passive capture** | Plugin auto-uploads sessions in background | Zero-friction knowledge accumulation |
+1. Install/copy the Synapse binary on the machine running the IDE.
+2. Create a JWT with the correct issuer, audience, `sub`, and `organization_id`.
+3. Store it in a user-only file:
 
-For most modern AI IDEs, the MCP Server alone provides both — the agent
-searches before answering and saves valuable sessions automatically.
+```bash
+install -m 0600 /dev/null "$HOME/.synapse-token"
+printf '%s' "$SYNAPSE_TOKEN" >"$HOME/.synapse-token"
+```
 
----
+Using `SYNAPSE_TOKEN_FILE` avoids putting credentials directly in IDE configuration.
 
-## Kiro
-
-Add to `.kiro/settings/mcp.json`:
+## Kiro / compatible MCP configuration
 
 ```json
 {
   "mcpServers": {
     "synapse": {
-      "command": "node",
-      "args": ["/path/to/synapse/packages/mcp-server/dist/index.js"],
+      "command": "/usr/local/bin/synapse",
+      "args": ["mcp"],
       "env": {
-        "SYNAPSE_API_URL": "https://ctx.internal.company.com",
-        "SYNAPSE_TOKEN": "<your-token>",
-        "DEVELOPER_ID": "<your-alias>",
-        "ORGANIZATION_ID": "<your-org>"
+        "SYNAPSE_API_URL": "https://synapse.example.com",
+        "SYNAPSE_TOKEN_FILE": "/Users/you/.synapse-token"
       }
     }
   }
 }
 ```
 
-The agent will automatically use `get_context` before answering questions and
-`save_session` when it produces valuable insights.
+Use the equivalent absolute token path on Linux or Windows. Restart/reconnect the MCP server after changing configuration.
 
----
+## Tools
 
-## Cursor
+The server exposes search/context/facts/history, session/insight save, and reflect-facing tools. The HTTP reflect endpoint is currently a placeholder, so the reflect tool does not yet perform LLM synthesis.
 
-Add to Cursor's MCP settings (Settings → MCP Servers → Add):
-
-```json
-{
-  "synapse": {
-    "command": "node",
-    "args": ["/path/to/synapse/packages/mcp-server/dist/index.js"],
-    "env": {
-      "SYNAPSE_API_URL": "https://ctx.internal.company.com",
-      "SYNAPSE_TOKEN": "<your-token>",
-      "DEVELOPER_ID": "<your-alias>",
-      "ORGANIZATION_ID": "<your-org>"
-    }
-  }
-}
-```
-
-Cursor's agent will call the knowledge tools when relevant to your prompts.
-
----
-
-## Claude Desktop
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "synapse": {
-      "command": "node",
-      "args": ["/path/to/synapse/packages/mcp-server/dist/index.js"],
-      "env": {
-        "SYNAPSE_API_URL": "https://ctx.internal.company.com",
-        "SYNAPSE_TOKEN": "<your-token>",
-        "DEVELOPER_ID": "<your-alias>",
-        "ORGANIZATION_ID": "<your-org>"
-      }
-    }
-  }
-}
-```
-
----
-
-## Windsurf
-
-Add via Windsurf MCP configuration (similar to Cursor):
-
-```json
-{
-  "synapse": {
-    "command": "node",
-    "args": ["/path/to/packages/mcp-server/dist/index.js"],
-    "env": {
-      "SYNAPSE_API_URL": "https://ctx.internal.company.com",
-      "SYNAPSE_TOKEN": "<your-token>",
-      "DEVELOPER_ID": "<your-alias>",
-      "ORGANIZATION_ID": "<your-org>"
-    }
-  }
-}
-```
-
----
-
-## VS Code (with GitHub Copilot MCP or Cline)
-
-### Via Cline extension:
-Settings → Cline → MCP Servers → Add the same config as above.
-
-### Via Copilot Chat (MCP preview):
-`.vscode/mcp.json`:
-```json
-{
-  "servers": {
-    "synapse": {
-      "command": "node",
-      "args": ["./packages/mcp-server/dist/index.js"],
-      "env": {
-        "SYNAPSE_API_URL": "https://ctx.internal.company.com",
-        "SYNAPSE_TOKEN": "<your-token>",
-        "DEVELOPER_ID": "<your-alias>",
-        "ORGANIZATION_ID": "<your-org>"
-      }
-    }
-  }
-}
-```
-
----
-
-## Terminal Agents (Claude Code, Codex CLI, Aider)
-
-These support MCP natively or via configuration:
-
-**Claude Code (claude cli):**
-```bash
-# Add to ~/.claude/mcp_servers.json
-```
-
-**Codex CLI:**
-```bash
-# Uses the same MCP config format as Claude Desktop
-```
-
----
-
-## CLI Tool (any terminal)
-
-For developers who prefer the command line:
+## Diagnose
 
 ```bash
-# Install globally
-cd packages/cli && npm install && npm link
-
-# Configure
-export SYNAPSE_API_URL=https://ctx.internal.company.com
-export SYNAPSE_TOKEN=your-token
-export DEVELOPER_ID=your-alias
-export ORGANIZATION_ID=your-org
-
-# Use
-synapse search "how do we deploy to production?"
-synapse facts --entity Kafka
-synapse history PostgreSQL
-synapse insight "Lambda cold start takes 3s in VPC due to ENI" --type lesson
+SYNAPSE_API_URL=https://synapse.example.com \
+SYNAPSE_TOKEN_FILE="$HOME/.synapse-token" \
+/usr/local/bin/synapse mcp
 ```
 
----
+MCP uses stdin/stdout JSON-RPC, so it will wait for input. Check API connectivity separately:
 
-## What Happens After Connection
-
-Once connected, the system works automatically:
-
-```
-Developer asks: "How do I fix this Lambda timeout?"
-    │
-    ├─ Agent calls get_context("Lambda timeout")
-    │   → Returns: "VPC DNS resolution causes 3-5s delay. Use VPC endpoints."
-    │   → Agent uses this in its response (no hallucination)
-    │
-    ├─ Conversation resolves the issue
-    │
-    └─ Agent calls save_session(...) or plugin passively uploads
-        → Session processed → facts extracted → knowledge grows
+```bash
+curl -fsS https://synapse.example.com/health/ready
+curl -fsS -H "Authorization: Bearer $(cat "$HOME/.synapse-token")" \
+  https://synapse.example.com/api/v1/stats
 ```
 
-Over time:
-- Common questions get instant answers from the fact layer
-- Token usage per query decreases (12K → 800 tokens over 24 months)
-- Knowledge compounds — each engineer benefits from all 600 engineers' sessions
-
----
-
-## Troubleshooting
-
-**"MCP server not connecting"**
-- Verify the path to `packages/mcp-server/dist/index.js` is correct
-- Run `cd packages/mcp-server && npm run build` first
-- Check that env vars are set correctly
-
-**"No results found"**
-- The knowledge base is empty until sessions are captured
-- Try saving a session first: use `save_session` tool or `synapse capture` CLI
-
-**"Connection refused"**
-- Ensure the API server is running (`npm run dev` in the root)
-- Check `SYNAPSE_API_URL` points to the running server
-
-**"Unauthorized"**
-- Verify `SYNAPSE_TOKEN` is a valid token
-- In local dev, the token can be any non-empty string (auth is disabled)
+Do not commit token files or use the nginx-injected admin token for IDE clients.
