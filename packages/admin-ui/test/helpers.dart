@@ -11,6 +11,57 @@ class MockApiService extends ApiService {
 
   @override
   Future<Map<String, dynamic>> get(String path) async {
+    if (path == '/api/v1/admin/users') {
+      return {
+        'users': [
+          {
+            'id': '1',
+            'email': 'admin@synapse.local',
+            'displayName': 'Admin',
+            'roles': ['admin'],
+            'disabled': false,
+            'lastLoginAt': '2026-08-01',
+            'createdAt': '2026-07-31',
+          },
+          {
+            'id': '2',
+            'email': 'dev@company.com',
+            'displayName': 'Developer',
+            'roles': ['developer'],
+            'disabled': false,
+            'lastLoginAt': null,
+            'createdAt': '2026-08-01',
+          },
+        ],
+        'total': 2,
+      };
+    }
+    if (path == '/api/v1/admin/roles') {
+      return {
+        'roles': [
+          {
+            'id': 'admin',
+            'label': 'Admin',
+            'description': 'Full system access including user management',
+          },
+          {
+            'id': 'team_lead',
+            'label': 'Team Lead',
+            'description': 'Team-scoped data access and configuration',
+          },
+          {
+            'id': 'developer',
+            'label': 'Developer',
+            'description': 'Capture sessions, search, and manage own data',
+          },
+          {
+            'id': 'viewer',
+            'label': 'Viewer',
+            'description': 'Read-only access to search and facts',
+          },
+        ],
+      };
+    }
     if (path == '/health/ready') {
       return {
         'status': 'ready',

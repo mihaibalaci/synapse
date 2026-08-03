@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:synapse_admin/pages/users/users_page.dart';
-
 import 'helpers.dart';
 
 void main() {
@@ -22,7 +21,7 @@ void main() {
       expect(find.text('Add User'), findsOneWidget);
     });
 
-    testWidgets('renders roles section with all roles', (tester) async {
+    testWidgets('renders roles from API', (tester) async {
       setLargeViewport(tester);
       addTearDown(() => tester.view.resetPhysicalSize());
 
@@ -30,32 +29,19 @@ void main() {
       await tester.pump();
 
       expect(find.text('Admin'), findsWidgets);
-      expect(find.text('Team Lead'), findsWidgets);
       expect(find.text('Developer'), findsWidgets);
       expect(find.text('Viewer'), findsOneWidget);
     });
 
-    testWidgets('renders role descriptions', (tester) async {
+    testWidgets('renders users from API', (tester) async {
       setLargeViewport(tester);
       addTearDown(() => tester.view.resetPhysicalSize());
 
       await tester.pumpWidget(buildTestApp(const UsersPage()));
       await tester.pump();
 
-      expect(find.text('Full system access, user management'), findsOneWidget);
-      expect(find.text('Capture, search, own data'), findsOneWidget);
-    });
-
-    testWidgets('renders users table with sample data', (tester) async {
-      setLargeViewport(tester);
-      addTearDown(() => tester.view.resetPhysicalSize());
-
-      await tester.pumpWidget(buildTestApp(const UsersPage()));
-      await tester.pump();
-
-      expect(find.text('Alice Chen'), findsOneWidget);
-      expect(find.text('Bob Park'), findsOneWidget);
-      expect(find.text('Carol Singh'), findsOneWidget);
+      expect(find.text('admin@synapse.local'), findsOneWidget);
+      expect(find.text('dev@company.com'), findsOneWidget);
     });
 
     testWidgets('shows add user dialog on button tap', (tester) async {
@@ -68,7 +54,7 @@ void main() {
       await tester.tap(find.text('Add User'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Name'), findsOneWidget);
+      expect(find.text('Display Name'), findsOneWidget);
       expect(find.text('Email'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);

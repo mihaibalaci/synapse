@@ -431,9 +431,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      (e.key as String)
-                          .replaceAll(RegExp(r'([A-Z])'), ' \$1')
-                          .trimLeft(),
+                      _formatCheckName(e.key as String),
                       style: theme.textTheme.bodyMedium,
                     ),
                     const Spacer(),
@@ -455,6 +453,23 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       ),
     );
+  }
+
+  String _formatCheckName(String key) {
+    // Convert camelCase to Title Case: "objectStorage" -> "Object Storage"
+    final buffer = StringBuffer();
+    for (int i = 0; i < key.length; i++) {
+      final char = key[i];
+      if (i == 0) {
+        buffer.write(char.toUpperCase());
+      } else if (char.toUpperCase() == char && char.toLowerCase() != char) {
+        buffer.write(' ');
+        buffer.write(char);
+      } else {
+        buffer.write(char);
+      }
+    }
+    return buffer.toString();
   }
 
   Widget _buildQueuePanel() {
