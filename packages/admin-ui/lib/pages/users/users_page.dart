@@ -219,6 +219,11 @@ class _UsersPageState extends State<UsersPage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
+                                icon: const Icon(Icons.edit, size: 18),
+                                onPressed: () => _showEditUserDialog(user),
+                                tooltip: 'Edit',
+                              ),
+                              IconButton(
                                 icon: const Icon(Icons.block, size: 18),
                                 onPressed: () => _toggleDisable(user),
                                 tooltip: disabled ? 'Enable' : 'Disable',
@@ -371,6 +376,134 @@ class _UsersPageState extends State<UsersPage> {
         'disabled': !disabled,
       });
       _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      }
+    }
+  }
+
+  void _showEditUserDialog(Map<String, dynamic> user) {
+    final nameCtrl = TextEditingController(text: user['displayName'] ?? '');
+    final passCtrl = TextEditingController();
+    String selectedRole =
+        (user['roles'] as List?)?.first?.toString() ?? 'viewer';
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: Text('Edit ${user['email']}'),
+              content: SizedBox(
+                width: 400,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Display Name',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedRole,
+                      decoration: const InputDecoration(
+                        labelText: 'Role',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'admin', child: Text('Admin')),
+                        DropdownMenuItem(
+                          value: 'team_lead',
+                          child: Text('Team Lead'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'developer',
+                          child: Text('Developer'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'viewer',
+                          child: Text('Viewer'),
+                        ),
+                      ],
+                      onChanged: (v) => setDialogState(
+                        () => selectedRole = v ?? selectedRole,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: passCtrl,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'New Password (leave empty to keep)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await _updateUser(
+                      user['id'],
+                      nameCtrl.text,
+                      selectedRole,
+                      passCtrl.text,
+                    );
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _updateUser(
+    String id,
+    String name,
+    String role,
+    String password,
+  ) async {
+    final updates = <String, dynamic>{
+      'displayName': name.trim(),
+      'roles': [role],
+    };
+    if (password.isNotEmpty) {
+      if (password.length < 12) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Password must be at least 12 characters'),
+            ),
+          );
+        }
+        return;
+      }
+      updates['password'] = password;
+    }
+    try {
+      await context.read<ApiService>().updateUser(id, updates);
+      _load();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('User updated')));
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
