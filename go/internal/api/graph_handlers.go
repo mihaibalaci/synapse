@@ -22,12 +22,14 @@ func handleGraphEntity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := appFromRequest(r).DB.Query(r.Context(), `
-		SELECT neighbor.name, ge.relation, ge.weight, ge.created_at
-		FROM graph_nodes gn
-		JOIN graph_edges ge ON ge.source_id = gn.id OR ge.target_id = gn.id
-		JOIN graph_nodes neighbor ON neighbor.id = CASE
-			WHEN ge.source_id = gn.id THEN ge.target_id ELSE ge.source_id END
-		WHERE gn.organization_id = $1 AND gn.name = $2 AND gn.kind = 'entity'
+		SELECT
+			CASE WHEN ge.source_node_id = $2 THEN ge.target_node_id ELSE ge.source_node_id END AS neighbor,
+			ge.edge_type AS relation,
+			ge.weight,
+			ge.created_at
+		FROM graph_edges ge
+		WHERE ge.organization_id = $1
+			AND (ge.source_node_id = $2 OR ge.target_node_id = $2)
 		ORDER BY ge.weight DESC
 		LIMIT 50`, claims.OrganizationID, entity)
 	if err != nil {
@@ -72,23 +74,29 @@ func handleGraphPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use PostgreSQL recursive CTE for BFS path finding (max 4 hops)
 	rows, err := appFromRequest(r).DB.Query(r.Context(), `
 		WITH RECURSIVE paths AS (
-			SELECT gn.id AS current_id, gn.name AS current_name,
-				ARRAY[gn.name] AS path, 1 AS depth
-			FROM graph_nodes gn
-			WHERE gn.organization_id = $1 AND gn.name = $2 AND gn.kind = 'entity'
+			SELECT source_node_id AS start_node,
+				CASE WHEN source_node_id = $2 THEN target_node_id ELSE source_node_id END AS current_node,
+				ARRAY[$2::text,
+					CASE WHEN source_node_id = $2 THEN target_node_id ELSE source_node_id END
+				] AS path,
+				1 AS depth
+			FROM graph_edges
+			WHERE organization_id = $1
+				AND (source_node_id = $2 OR target_node_id = $2)
 			UNION ALL
-			SELECT neighbor.id, neighbor.name,
-				p.path || neighbor.name, p.depth + 1
+			SELECT p.start_node,
+				CASE WHEN ge.source_node_id = p.current_node THEN ge.target_node_id ELSE ge.source_node_id END,
+				p.path || CASE WHEN ge.source_node_id = p.current_node THEN ge.target_node_id ELSE ge.source_node_id END,
+				p.depth + 1
 			FROM paths p
-			JOIN graph_edges ge ON ge.source_id = p.current_id OR ge.target_id = p.current_id
-			JOIN graph_nodes neighbor ON neighbor.id = CASE
-				WHEN ge.source_id = p.current_id THEN ge.target_id ELSE ge.source_id END
-			WHERE p.depth < 4 AND NOT neighbor.name = ANY(p.path)
+			JOIN graph_edges ge ON ge.organization_id = $1
+				AND (ge.source_node_id = p.current_node OR ge.target_node_id = p.current_node)
+			WHERE p.depth < 4
+				AND NOT (CASE WHEN ge.source_node_id = p.current_node THEN ge.target_node_id ELSE ge.source_node_id END) = ANY(p.path)
 		)
-		SELECT path FROM paths WHERE current_name = $3
+		SELECT path FROM paths WHERE current_node = $3
 		ORDER BY depth ASC LIMIT 5`, claims.OrganizationID, from, to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "QUERY_ERROR", err.Error())
@@ -120,11 +128,12 @@ func handleGraphImportant(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 20)
 
 	rows, err := appFromRequest(r).DB.Query(r.Context(), `
-		SELECT gn.name, SUM(ge.weight) AS total_weight, COUNT(*) AS edge_count
+		SELECT gn.name, COALESCE(SUM(ge.weight), 0) AS total_weight, COUNT(ge.*) AS edge_count
 		FROM graph_nodes gn
-		JOIN graph_edges ge ON ge.source_id = gn.id OR ge.target_id = gn.id
-		WHERE gn.organization_id = $1 AND gn.kind = 'entity'
-		GROUP BY gn.id, gn.name
+		LEFT JOIN graph_edges ge ON ge.organization_id = gn.organization_id
+			AND (ge.source_node_id = gn.node_id OR ge.target_node_id = gn.node_id)
+		WHERE gn.organization_id = $1
+		GROUP BY gn.node_id, gn.name
 		ORDER BY total_weight DESC
 		LIMIT $2`, claims.OrganizationID, limit)
 	if err != nil {
