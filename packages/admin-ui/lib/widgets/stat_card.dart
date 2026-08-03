@@ -41,13 +41,23 @@ class StatCard extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: (iconColor ?? colorScheme.primary).withValues(alpha: 0.1),
+                        color: (iconColor ?? colorScheme.primary).withValues(
+                          alpha: 0.1,
+                        ),
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Icon(icon, size: 18, color: iconColor ?? colorScheme.primary),
+                      child: Icon(
+                        icon,
+                        size: 18,
+                        color: iconColor ?? colorScheme.primary,
+                      ),
                     ),
                   if (onTap != null)
-                    Icon(Icons.arrow_forward_ios, size: 12, color: colorScheme.onSurface.withValues(alpha: 0.3)),
+                    Icon(
+                      Icons.arrow_forward_ios,
+                      size: 12,
+                      color: colorScheme.onSurface.withValues(alpha: 0.3),
+                    ),
                 ],
               ),
               const SizedBox(height: 16),

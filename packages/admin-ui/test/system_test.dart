@@ -56,7 +56,7 @@ void main() {
 
       expect(find.text('Data Flow'), findsOneWidget);
       expect(find.text('Capture'), findsOneWidget);
-      expect(find.text('Embed'), findsOneWidget);
+      expect(find.text('Embed'), findsWidgets);
       expect(find.text('Index'), findsOneWidget);
     });
   });

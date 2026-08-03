@@ -158,6 +158,16 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 			r.Get("/webhooks", handleListWebhooks)
 			r.Post("/webhooks", handleCreateWebhook)
 			r.Delete("/webhooks/{id}", handleDeleteWebhook)
+
+			// Organizations & Teams
+			r.Get("/organizations", handleListOrganizations)
+			r.Post("/organizations", handleCreateOrganization)
+			r.Get("/teams", handleListTeams)
+			r.Post("/teams", handleCreateTeam)
+			r.Delete("/teams/{id}", handleDeleteTeam)
+			r.Get("/teams/{id}/members", handleListTeamMembers)
+			r.Post("/teams/{id}/members", handleAddTeamMember)
+			r.Delete("/teams/{id}/members/{userId}", handleRemoveTeamMember)
 		})
 
 		// Self-service API keys (any authenticated user)

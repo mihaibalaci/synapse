@@ -22,13 +22,13 @@ class _GraphPageState extends State<GraphPage> {
   @override
   void initState() {
     super.initState();
-    _loadImportant();
+    _loadAllNodes();
   }
 
-  Future<void> _loadImportant() async {
+  Future<void> _loadAllNodes() async {
     try {
       final data = await context.read<ApiService>().get(
-        '/api/v1/admin/graph/important?limit=20',
+        '/api/v1/admin/graph/important?limit=100',
       );
       if (mounted) setState(() => _important = data['entities'] as List? ?? []);
     } catch (_) {}
@@ -63,6 +63,12 @@ class _GraphPageState extends State<GraphPage> {
       if (mounted) setState(() => _paths = []);
     }
     if (mounted) setState(() => _loading = false);
+  }
+
+  void _selectEntity(String name) {
+    _entityController.text = name;
+    setState(() => _activeTab = 'explore');
+    _exploreEntity();
   }
 
   @override
@@ -100,12 +106,6 @@ class _GraphPageState extends State<GraphPage> {
                 label: const Text('Path'),
                 selected: _activeTab == 'path',
                 onSelected: (_) => setState(() => _activeTab = 'path'),
-              ),
-              const SizedBox(width: 8),
-              ChoiceChip(
-                label: const Text('Important'),
-                selected: _activeTab == 'important',
-                onSelected: (_) => setState(() => _activeTab = 'important'),
               ),
             ],
           ),
@@ -176,22 +176,6 @@ class _GraphPageState extends State<GraphPage> {
             ),
           ],
         );
-      case 'important':
-        return _important.isEmpty
-            ? const Center(child: Text('No graph data yet'))
-            : ListView.builder(
-                itemCount: _important.length,
-                itemBuilder: (_, i) {
-                  final e = _important[i] as Map<String, dynamic>;
-                  return ListTile(
-                    leading: CircleAvatar(child: Text('${i + 1}')),
-                    title: Text(e['name'] ?? ''),
-                    subtitle: Text(
-                      'Weight: ${e['totalWeight']} • Edges: ${e['edgeCount']}',
-                    ),
-                  );
-                },
-              );
       default:
         return Column(
           children: [
@@ -212,27 +196,35 @@ class _GraphPageState extends State<GraphPage> {
                   onPressed: _exploreEntity,
                   child: const Text('Explore'),
                 ),
+                if (_entityController.text.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      _entityController.clear();
+                      setState(() => _edges = []);
+                    },
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: _edges.isEmpty
-                  ? const Center(
-                      child: Text('Enter an entity name to see connections'),
-                    )
+              child: _entityController.text.isEmpty && _edges.isEmpty
+                  ? _buildMindMap(theme)
+                  : _edges.isEmpty
+                  ? const Center(child: Text('No connections found'))
                   : ListView.builder(
                       itemCount: _edges.length,
                       itemBuilder: (_, i) {
                         final e = _edges[i] as Map<String, dynamic>;
                         return ListTile(
+                          leading: const Icon(Icons.link, size: 18),
                           title: Text(e['neighbor'] ?? ''),
                           subtitle: Text(
                             '${e['relation']} (weight: ${e['weight']})',
                           ),
-                          onTap: () {
-                            _entityController.text = e['neighbor'] ?? '';
-                            _exploreEntity();
-                          },
+                          onTap: () => _selectEntity(e['neighbor'] ?? ''),
                         );
                       },
                     ),
@@ -240,5 +232,57 @@ class _GraphPageState extends State<GraphPage> {
           ],
         );
     }
+  }
+
+  Widget _buildMindMap(ThemeData theme) {
+    if (_important.isEmpty) {
+      return const Center(
+        child: Text(
+          'No graph data yet.\nCapture sessions to build the knowledge graph.',
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    final maxWeight = _important.fold<double>(1, (prev, e) {
+      final w = ((e as Map)['totalWeight'] as num?)?.toDouble() ?? 1;
+      return w > prev ? w : prev;
+    });
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${_important.length} entities in the knowledge graph. Click to explore:',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: _important.map((e) {
+                final entity = e as Map<String, dynamic>;
+                final name = entity['name'] as String? ?? '';
+                final weight = (entity['totalWeight'] as num?)?.toDouble() ?? 1;
+                final normalized = (weight / maxWeight).clamp(0.2, 1.0);
+                final fontSize = 11.0 + (normalized * 8);
+                return ActionChip(
+                  label: Text(name, style: TextStyle(fontSize: fontSize)),
+                  backgroundColor: theme.colorScheme.primaryContainer
+                      .withValues(alpha: normalized),
+                  side: BorderSide(
+                    color: theme.colorScheme.primary.withValues(
+                      alpha: normalized * 0.5,
+                    ),
+                  ),
+                  onPressed: () => _selectEntity(name),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

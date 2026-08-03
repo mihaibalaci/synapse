@@ -119,16 +119,16 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Map<String, dynamic> _formPayload() => {
-        'provider': _provider,
-        'baseUrl': _baseUrlCtrl.text.trim(),
-        'model': _modelCtrl.text.trim(),
-        'apiKey': _apiKeyCtrl.text,
-        'temperature': _temperature,
-        'maxTokens': _asInt(_maxTokensCtrl.text, 1024),
-        'numThread': _asInt(_threadsCtrl.text, 4),
-        'timeoutSeconds': _asInt(_timeoutCtrl.text, 120),
-        'enabled': _enabled,
-      };
+    'provider': _provider,
+    'baseUrl': _baseUrlCtrl.text.trim(),
+    'model': _modelCtrl.text.trim(),
+    'apiKey': _apiKeyCtrl.text,
+    'temperature': _temperature,
+    'maxTokens': _asInt(_maxTokensCtrl.text, 1024),
+    'numThread': _asInt(_threadsCtrl.text, 4),
+    'timeoutSeconds': _asInt(_timeoutCtrl.text, 120),
+    'enabled': _enabled,
+  };
 
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
@@ -165,7 +165,9 @@ class _SettingsPageState extends State<SettingsPage> {
     });
 
     try {
-      final result = await context.read<ApiService>().testLlmSettings(_formPayload());
+      final result = await context.read<ApiService>().testLlmSettings(
+        _formPayload(),
+      );
       if (!mounted) return;
       setState(() {
         _testing = false;
@@ -180,7 +182,12 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() {
         _testing = false;
-        _testOutcome = _TestOutcome(ok: false, message: _friendlyError(e), latencyMs: 0, reply: '');
+        _testOutcome = _TestOutcome(
+          ok: false,
+          message: _friendlyError(e),
+          latencyMs: 0,
+          reply: '',
+        );
       });
     }
   }
@@ -189,11 +196,13 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _discovering = true);
     try {
       final result = await context.read<ApiService>().getLlmModels(
-            provider: _provider,
-            baseUrl: _baseUrlCtrl.text.trim(),
-          );
+        provider: _provider,
+        baseUrl: _baseUrlCtrl.text.trim(),
+      );
       if (!mounted) return;
-      final models = ((result['models'] as List?) ?? []).map((m) => m.toString()).toList();
+      final models = ((result['models'] as List?) ?? [])
+          .map((m) => m.toString())
+          .toList();
       setState(() {
         _availableModels = models;
         _discovering = false;
@@ -239,13 +248,18 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Configuration',
-              style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+          Text(
+            'Configuration',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 4),
           Text(
             'Language model used for synthesis features such as reflect',
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(color: colorScheme.onSurface.withValues(alpha: 0.6)),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
           ),
           const SizedBox(height: 24),
 
@@ -260,8 +274,13 @@ class _SettingsPageState extends State<SettingsPage> {
                 color: colorScheme.errorContainer,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(_error!,
-                  style: TextStyle(color: colorScheme.onErrorContainer, fontSize: 13)),
+              child: Text(
+                _error!,
+                style: TextStyle(
+                  color: colorScheme.onErrorContainer,
+                  fontSize: 13,
+                ),
+              ),
             ),
 
           if (!_loading)
@@ -280,11 +299,18 @@ class _SettingsPageState extends State<SettingsPage> {
                           children: [
                             Row(
                               children: [
-                                Icon(Icons.smart_toy_outlined, size: 20, color: colorScheme.primary),
+                                Icon(
+                                  Icons.smart_toy_outlined,
+                                  size: 20,
+                                  color: colorScheme.primary,
+                                ),
                                 const SizedBox(width: 8),
-                                Text('Language Model',
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(fontWeight: FontWeight.w600)),
+                                Text(
+                                  'Language Model',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                                 const Spacer(),
                                 Switch(
                                   value: _enabled && configured,
@@ -294,7 +320,9 @@ class _SettingsPageState extends State<SettingsPage> {
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
-                                  _enabled && configured ? 'Enabled' : 'Disabled',
+                                  _enabled && configured
+                                      ? 'Enabled'
+                                      : 'Disabled',
                                   style: theme.textTheme.bodySmall,
                                 ),
                               ],
@@ -306,10 +334,16 @@ class _SettingsPageState extends State<SettingsPage> {
                               decoration: const InputDecoration(
                                 labelText: 'Provider',
                                 border: OutlineInputBorder(),
-                                helperText: 'Self-hosted ollama keeps conversations on your network',
+                                helperText:
+                                    'Self-hosted ollama keeps conversations on your network',
                               ),
                               items: _providers
-                                  .map((p) => DropdownMenuItem(value: p, child: Text(_providerLabel(p))))
+                                  .map(
+                                    (p) => DropdownMenuItem(
+                                      value: p,
+                                      child: Text(_providerLabel(p)),
+                                    ),
+                                  )
                                   .toList(),
                               onChanged: (v) {
                                 if (v == null) return;
@@ -317,11 +351,14 @@ class _SettingsPageState extends State<SettingsPage> {
                                   _provider = v;
                                   _testOutcome = null;
                                   _availableModels = [];
-                                  if (v == 'ollama' && _baseUrlCtrl.text.trim().isEmpty) {
-                                    _baseUrlCtrl.text = 'http://localhost:11434';
+                                  if (v == 'ollama' &&
+                                      _baseUrlCtrl.text.trim().isEmpty) {
+                                    _baseUrlCtrl.text =
+                                        'http://localhost:11434';
                                   }
                                 });
-                                if (v == 'ollama') _discoverModels(silent: true);
+                                if (v == 'ollama')
+                                  _discoverModels(silent: true);
                               },
                             ),
 
@@ -330,14 +367,19 @@ class _SettingsPageState extends State<SettingsPage> {
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                                  color: colorScheme.surfaceContainerHighest
+                                      .withValues(alpha: 0.4),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Row(
                                   children: [
-                                    Icon(Icons.info_outline,
-                                        size: 18,
-                                        color: colorScheme.onSurface.withValues(alpha: 0.5)),
+                                    Icon(
+                                      Icons.info_outline,
+                                      size: 18,
+                                      color: colorScheme.onSurface.withValues(
+                                        alpha: 0.5,
+                                      ),
+                                    ),
                                     const SizedBox(width: 10),
                                     Expanded(
                                       child: Text(
@@ -363,8 +405,10 @@ class _SettingsPageState extends State<SettingsPage> {
                                 ),
                                 validator: (v) {
                                   final value = (v ?? '').trim();
-                                  if (value.isEmpty) return 'Base URL is required';
-                                  if (!value.startsWith('http://') && !value.startsWith('https://')) {
+                                  if (value.isEmpty)
+                                    return 'Base URL is required';
+                                  if (!value.startsWith('http://') &&
+                                      !value.startsWith('https://')) {
                                     return 'Must start with http:// or https://';
                                   }
                                   return null;
@@ -386,12 +430,16 @@ class _SettingsPageState extends State<SettingsPage> {
                                               border: OutlineInputBorder(),
                                               hintText: 'qwen2.5-cpu',
                                             ),
-                                            validator: (v) => (v ?? '').trim().isEmpty
+                                            validator: (v) =>
+                                                (v ?? '').trim().isEmpty
                                                 ? 'Model is required'
                                                 : null,
                                           )
                                         : DropdownButtonFormField<String>(
-                                            initialValue: _availableModels.contains(_modelCtrl.text)
+                                            initialValue:
+                                                _availableModels.contains(
+                                                  _modelCtrl.text,
+                                                )
                                                 ? _modelCtrl.text
                                                 : null,
                                             decoration: const InputDecoration(
@@ -399,12 +447,18 @@ class _SettingsPageState extends State<SettingsPage> {
                                               border: OutlineInputBorder(),
                                             ),
                                             items: _availableModels
-                                                .map((m) =>
-                                                    DropdownMenuItem(value: m, child: Text(m)))
+                                                .map(
+                                                  (m) => DropdownMenuItem(
+                                                    value: m,
+                                                    child: Text(m),
+                                                  ),
+                                                )
                                                 .toList(),
-                                            onChanged: (v) =>
-                                                setState(() => _modelCtrl.text = v ?? ''),
-                                            validator: (v) => (v == null || v.isEmpty)
+                                            onChanged: (v) => setState(
+                                              () => _modelCtrl.text = v ?? '',
+                                            ),
+                                            validator: (v) =>
+                                                (v == null || v.isEmpty)
                                                 ? 'Select a model'
                                                 : null,
                                           ),
@@ -416,13 +470,22 @@ class _SettingsPageState extends State<SettingsPage> {
                                       child: SizedBox(
                                         height: 58,
                                         child: OutlinedButton(
-                                          onPressed: _discovering ? null : () => _discoverModels(),
+                                          onPressed: _discovering
+                                              ? null
+                                              : () => _discoverModels(),
                                           child: _discovering
                                               ? const SizedBox(
                                                   width: 16,
                                                   height: 16,
-                                                  child: CircularProgressIndicator(strokeWidth: 2))
-                                              : const Icon(Icons.refresh, size: 18),
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
+                                                )
+                                              : const Icon(
+                                                  Icons.refresh,
+                                                  size: 18,
+                                                ),
                                         ),
                                       ),
                                     ),
@@ -439,23 +502,31 @@ class _SettingsPageState extends State<SettingsPage> {
                                 decoration: const InputDecoration(
                                   labelText: 'API key',
                                   border: OutlineInputBorder(),
-                                  helperText: 'Stored server side. Leave the mask to keep the current key.',
+                                  helperText:
+                                      'Stored server side. Leave the mask to keep the current key.',
                                 ),
-                                validator: (v) =>
-                                    (v ?? '').isEmpty ? 'API key is required for this provider' : null,
+                                validator: (v) => (v ?? '').isEmpty
+                                    ? 'API key is required for this provider'
+                                    : null,
                               ),
                               const SizedBox(height: 8),
                               Row(
                                 children: [
-                                  Icon(Icons.warning_amber_rounded,
-                                      size: 16, color: Colors.amber[700]),
+                                  Icon(
+                                    Icons.warning_amber_rounded,
+                                    size: 16,
+                                    color: Colors.amber[700],
+                                  ),
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
                                       'Hosted providers receive your conversation content. '
                                       'Use ollama to keep it on your own network.',
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                          color: colorScheme.onSurface.withValues(alpha: 0.6)),
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: colorScheme.onSurface
+                                                .withValues(alpha: 0.6),
+                                          ),
                                     ),
                                   ),
                                 ],
@@ -474,16 +545,22 @@ class _SettingsPageState extends State<SettingsPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Generation',
-                                  style: theme.textTheme.titleMedium
-                                      ?.copyWith(fontWeight: FontWeight.w600)),
+                              Text(
+                                'Generation',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                               const SizedBox(height: 16),
 
                               Row(
                                 children: [
                                   SizedBox(
                                     width: 130,
-                                    child: Text('Temperature', style: theme.textTheme.bodyMedium),
+                                    child: Text(
+                                      'Temperature',
+                                      style: theme.textTheme.bodyMedium,
+                                    ),
                                   ),
                                   Expanded(
                                     child: Slider(
@@ -492,21 +569,27 @@ class _SettingsPageState extends State<SettingsPage> {
                                       max: 2,
                                       divisions: 20,
                                       label: _temperature.toStringAsFixed(1),
-                                      onChanged: (v) => setState(() => _temperature = v),
+                                      onChanged: (v) =>
+                                          setState(() => _temperature = v),
                                     ),
                                   ),
                                   SizedBox(
                                     width: 40,
-                                    child: Text(_temperature.toStringAsFixed(1),
-                                        textAlign: TextAlign.right,
-                                        style: theme.textTheme.bodyMedium),
+                                    child: Text(
+                                      _temperature.toStringAsFixed(1),
+                                      textAlign: TextAlign.right,
+                                      style: theme.textTheme.bodyMedium,
+                                    ),
                                   ),
                                 ],
                               ),
                               Text(
                                 'Low values keep synthesis close to the retrieved material',
                                 style: theme.textTheme.bodySmall?.copyWith(
-                                    color: colorScheme.onSurface.withValues(alpha: 0.5)),
+                                  color: colorScheme.onSurface.withValues(
+                                    alpha: 0.5,
+                                  ),
+                                ),
                               ),
                               const SizedBox(height: 20),
 
@@ -564,7 +647,10 @@ class _SettingsPageState extends State<SettingsPage> {
                               ? const SizedBox(
                                   width: 16,
                                   height: 16,
-                                  child: CircularProgressIndicator(strokeWidth: 2))
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
                               : const Icon(Icons.save_outlined, size: 18),
                           label: Text(_saving ? 'Saving…' : 'Save'),
                         ),
@@ -575,16 +661,24 @@ class _SettingsPageState extends State<SettingsPage> {
                               ? const SizedBox(
                                   width: 16,
                                   height: 16,
-                                  child: CircularProgressIndicator(strokeWidth: 2))
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
                               : const Icon(Icons.play_arrow_rounded, size: 18),
-                          label: Text(_testing ? 'Testing…' : 'Test connection'),
+                          label: Text(
+                            _testing ? 'Testing…' : 'Test connection',
+                          ),
                         ),
                         const Spacer(),
                         if ((_updatedAt ?? '').isNotEmpty)
                           Text(
                             'Last changed $_updatedAt by ${_updatedBy!.isEmpty ? 'unknown' : _updatedBy}',
                             style: theme.textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSurface.withValues(alpha: 0.5)),
+                              color: colorScheme.onSurface.withValues(
+                                alpha: 0.5,
+                              ),
+                            ),
                           ),
                       ],
                     ),
@@ -623,12 +717,12 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   static String _providerLabel(String p) => switch (p) {
-        'none' => 'None (synthesis disabled)',
-        'ollama' => 'Ollama (self-hosted)',
-        'openai' => 'OpenAI',
-        'anthropic' => 'Anthropic',
-        _ => p,
-      };
+    'none' => 'None (synthesis disabled)',
+    'ollama' => 'Ollama (self-hosted)',
+    'openai' => 'OpenAI',
+    'anthropic' => 'Anthropic',
+    _ => p,
+  };
 
   static double _asDouble(dynamic v, double fallback) =>
       v is num ? v.toDouble() : (double.tryParse('$v') ?? fallback);
@@ -679,17 +773,25 @@ class _TestResultCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(outcome.ok ? Icons.check_circle_outline : Icons.error_outline,
-                  size: 18, color: color),
+              Icon(
+                outcome.ok ? Icons.check_circle_outline : Icons.error_outline,
+                size: 18,
+                color: color,
+              ),
               const SizedBox(width: 8),
               Text(
                 outcome.ok ? 'Connection succeeded' : 'Connection failed',
                 style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600, color: color),
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
               ),
               const Spacer(),
               if (outcome.latencyMs > 0)
-                Text('${outcome.latencyMs} ms', style: theme.textTheme.bodySmall),
+                Text(
+                  '${outcome.latencyMs} ms',
+                  style: theme.textTheme.bodySmall,
+                ),
             ],
           ),
           if (outcome.message.isNotEmpty) ...[
@@ -698,8 +800,12 @@ class _TestResultCard extends StatelessWidget {
           ],
           if (outcome.reply.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text('Model replied: "${outcome.reply}"',
-                style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace')),
+            Text(
+              'Model replied: "${outcome.reply}"',
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontFamily: 'monospace',
+              ),
+            ),
           ],
         ],
       ),

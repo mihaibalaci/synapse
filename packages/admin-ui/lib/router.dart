@@ -9,6 +9,7 @@ import 'pages/memory/memory_page.dart';
 import 'pages/onboarding/onboarding_page.dart';
 import 'pages/operations/operations_page.dart';
 import 'pages/search/search_page.dart';
+import 'pages/teams/teams_page.dart';
 import 'pages/users/users_page.dart';
 import 'pages/system/system_page.dart';
 import 'pages/activity/activity_page.dart';
@@ -52,6 +53,11 @@ GoRouter buildRouter(AuthService auth) {
             path: '/users',
             pageBuilder: (context, state) =>
                 const NoTransitionPage(child: UsersPage()),
+          ),
+          GoRoute(
+            path: '/teams',
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: TeamsPage()),
           ),
           GoRoute(
             path: '/system',

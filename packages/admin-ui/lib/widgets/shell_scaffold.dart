@@ -160,6 +160,12 @@ class _SideNav extends StatelessWidget {
             currentPath: currentPath,
           ),
           _NavItem(
+            icon: Icons.business_rounded,
+            label: 'Teams',
+            path: '/teams',
+            currentPath: currentPath,
+          ),
+          _NavItem(
             icon: Icons.memory_rounded,
             label: 'System',
             path: '/system',

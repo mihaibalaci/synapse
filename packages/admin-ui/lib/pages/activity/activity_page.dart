@@ -113,19 +113,44 @@ class _ActivityPageState extends State<ActivityPage> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Activity & Metrics', style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                    'Activity & Metrics',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const SizedBox(height: 4),
-                  Text('Real-time operational metrics, cache performance, and pipeline activity',
-                      style: theme.textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface.withValues(alpha: 0.6))),
+                  Text(
+                    'Real-time operational metrics, cache performance, and pipeline activity',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
                 ],
               ),
               Row(
                 children: [
-                  Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.green, shape: BoxShape.circle)),
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.green,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
                   const SizedBox(width: 6),
-                  Text('Live', style: TextStyle(fontSize: 12, color: Colors.green[300])),
+                  Text(
+                    'Live',
+                    style: TextStyle(fontSize: 12, color: Colors.green[300]),
+                  ),
                   const SizedBox(width: 4),
-                  Text('(5s refresh)', style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.4))),
+                  Text(
+                    '(5s refresh)',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: colorScheme.onSurface.withValues(alpha: 0.4),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -143,7 +168,10 @@ class _ActivityPageState extends State<ActivityPage> {
               ),
               child: Text(
                 _error!,
-                style: TextStyle(color: colorScheme.onErrorContainer, fontSize: 12),
+                style: TextStyle(
+                  color: colorScheme.onErrorContainer,
+                  fontSize: 12,
+                ),
               ),
             ),
 
@@ -203,17 +231,52 @@ class _ActivityPageState extends State<ActivityPage> {
               children: [
                 Icon(Icons.speed, size: 18, color: Colors.cyan[300]),
                 const SizedBox(width: 8),
-                Text('Cache Performance', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  'Cache Performance',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 16),
             Row(
               children: [
-                Expanded(child: _MetricTile(label: 'Hits', value: '$hits', color: Colors.green)),
-                Expanded(child: _MetricTile(label: 'Misses', value: '$misses', color: Colors.red)),
-                Expanded(child: _MetricTile(label: 'Hit Rate', value: '${hitRate.toStringAsFixed(1)}%', color: hitRate > 80 ? Colors.green : Colors.orange)),
-                Expanded(child: _MetricTile(label: 'Evictions', value: '${cache['evictions'] ?? 0}', color: Colors.amber)),
-                Expanded(child: _MetricTile(label: 'Cache Size', value: '${cache['size'] ?? 0}', color: Colors.blue)),
+                Expanded(
+                  child: _MetricTile(
+                    label: 'Hits',
+                    value: '$hits',
+                    color: Colors.green,
+                  ),
+                ),
+                Expanded(
+                  child: _MetricTile(
+                    label: 'Misses',
+                    value: '$misses',
+                    color: Colors.red,
+                  ),
+                ),
+                Expanded(
+                  child: _MetricTile(
+                    label: 'Hit Rate',
+                    value: '${hitRate.toStringAsFixed(1)}%',
+                    color: hitRate > 80 ? Colors.green : Colors.orange,
+                  ),
+                ),
+                Expanded(
+                  child: _MetricTile(
+                    label: 'Evictions',
+                    value: '${cache['evictions'] ?? 0}',
+                    color: Colors.amber,
+                  ),
+                ),
+                Expanded(
+                  child: _MetricTile(
+                    label: 'Cache Size',
+                    value: '${cache['size'] ?? 0}',
+                    color: Colors.blue,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -224,11 +287,19 @@ class _ActivityPageState extends State<ActivityPage> {
                 value: hitRate / 100,
                 minHeight: 8,
                 backgroundColor: Colors.red.withValues(alpha: 0.2),
-                valueColor: AlwaysStoppedAnimation<Color>(hitRate > 80 ? Colors.green : Colors.orange),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  hitRate > 80 ? Colors.green : Colors.orange,
+                ),
               ),
             ),
             const SizedBox(height: 4),
-            Text('Cache hit ratio', style: TextStyle(fontSize: 10, color: theme.colorScheme.onSurface.withValues(alpha: 0.4))),
+            Text(
+              'Cache hit ratio',
+              style: TextStyle(
+                fontSize: 10,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+              ),
+            ),
           ],
         ),
       ),
@@ -249,15 +320,36 @@ class _ActivityPageState extends State<ActivityPage> {
               children: [
                 Icon(Icons.search, size: 18, color: Colors.indigo[300]),
                 const SizedBox(width: 8),
-                Text('Retrieval', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  'Retrieval',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 16),
-            _MetricRow(label: 'Total Queries', value: '${retrieval['totalQueries'] ?? 0}'),
-            _MetricRow(label: 'Avg Latency', value: _ms(retrieval['avgLatencyMs'])),
-            _MetricRow(label: 'p95 Latency', value: _ms(retrieval['p95LatencyMs'])),
-            _MetricRow(label: 'Concurrent Now', value: '${retrieval['concurrentNow'] ?? 0}', highlight: (retrieval['concurrentNow'] ?? 0) > 0),
-            _MetricRow(label: 'Peak Concurrent', value: '${retrieval['peakConcurrent'] ?? 0}'),
+            _MetricRow(
+              label: 'Total Queries',
+              value: '${retrieval['totalQueries'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'Avg Latency',
+              value: _ms(retrieval['avgLatencyMs']),
+            ),
+            _MetricRow(
+              label: 'p95 Latency',
+              value: _ms(retrieval['p95LatencyMs']),
+            ),
+            _MetricRow(
+              label: 'Concurrent Now',
+              value: '${retrieval['concurrentNow'] ?? 0}',
+              highlight: (retrieval['concurrentNow'] ?? 0) > 0,
+            ),
+            _MetricRow(
+              label: 'Peak Concurrent',
+              value: '${retrieval['peakConcurrent'] ?? 0}',
+            ),
           ],
         ),
       ),
@@ -278,18 +370,47 @@ class _ActivityPageState extends State<ActivityPage> {
               children: [
                 Icon(Icons.input, size: 18, color: Colors.teal[300]),
                 const SizedBox(width: 8),
-                Text('Ingestion Pipeline', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  'Ingestion Pipeline',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 16),
-            _MetricRow(label: 'Sessions Processed', value: '${ingestion['sessionsProcessed'] ?? 0}'),
-            _MetricRow(label: 'Chunks Created', value: '${ingestion['chunksCreated'] ?? 0}'),
-            _MetricRow(label: 'Facts Extracted', value: '${ingestion['factsExtracted'] ?? 0}'),
-            _MetricRow(label: 'Segmentations', value: '${ingestion['segmentations'] ?? 0}'),
-            _MetricRow(label: 'Embeddings Generated', value: '${ingestion['embeddingsGenerated'] ?? 0}'),
-            _MetricRow(label: 'Deduplications Run', value: '${ingestion['deduplicationsRun'] ?? 0}'),
-            _MetricRow(label: 'Graph Updates', value: '${ingestion['graphUpdates'] ?? 0}'),
-            _MetricRow(label: 'Search Indexed', value: '${ingestion['searchIndexed'] ?? 0}'),
+            _MetricRow(
+              label: 'Sessions Processed',
+              value: '${ingestion['sessionsProcessed'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'Chunks Created',
+              value: '${ingestion['chunksCreated'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'Facts Extracted',
+              value: '${ingestion['factsExtracted'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'Segmentations',
+              value: '${ingestion['segmentations'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'Embeddings Generated',
+              value: '${ingestion['embeddingsGenerated'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'Deduplications Run',
+              value: '${ingestion['deduplicationsRun'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'Graph Updates',
+              value: '${ingestion['graphUpdates'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'Search Indexed',
+              value: '${ingestion['searchIndexed'] ?? 0}',
+            ),
           ],
         ),
       ),
@@ -310,14 +431,32 @@ class _ActivityPageState extends State<ActivityPage> {
               children: [
                 Icon(Icons.storage, size: 18, color: Colors.purple[300]),
                 const SizedBox(width: 8),
-                Text('Storage I/O', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  'Storage I/O',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 16),
-            _MetricRow(label: 'PG Active Conns', value: '${storage['pgActiveConns'] ?? 0} / ${storage['pgMaxConns'] ?? 20}'),
-            _MetricRow(label: 'Redis Connections', value: '${storage['redisConns'] ?? 0}'),
-            _MetricRow(label: 'S3 PUT Operations', value: '${storage['s3Puts'] ?? 0}'),
-            _MetricRow(label: 'S3 GET Operations', value: '${storage['s3Gets'] ?? 0}'),
+            _MetricRow(
+              label: 'PG Active Conns',
+              value:
+                  '${storage['pgActiveConns'] ?? 0} / ${storage['pgMaxConns'] ?? 20}',
+            ),
+            _MetricRow(
+              label: 'Redis Connections',
+              value: '${storage['redisConns'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'S3 PUT Operations',
+              value: '${storage['s3Puts'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'S3 GET Operations',
+              value: '${storage['s3Gets'] ?? 0}',
+            ),
           ],
         ),
       ),
@@ -337,17 +476,43 @@ class _ActivityPageState extends State<ActivityPage> {
           children: [
             Row(
               children: [
-                Icon(Icons.error_outline, size: 18, color: total > 0 ? Colors.red[300] : Colors.green[300]),
+                Icon(
+                  Icons.error_outline,
+                  size: 18,
+                  color: total > 0 ? Colors.red[300] : Colors.green[300],
+                ),
                 const SizedBox(width: 8),
-                Text('Errors', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  'Errors',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 16),
-            _MetricRow(label: 'Total Errors', value: '$total', highlight: total > 0),
-            _MetricRow(label: 'Last 5 min', value: '${errors['last5min'] ?? 0}', highlight: (errors['last5min'] ?? 0) > 0),
-            _MetricRow(label: 'Retrieval Errors', value: '${errors['retrieval'] ?? 0}'),
-            _MetricRow(label: 'Ingestion Errors', value: '${errors['ingestion'] ?? 0}'),
-            _MetricRow(label: 'Storage Errors', value: '${errors['storage'] ?? 0}'),
+            _MetricRow(
+              label: 'Total Errors',
+              value: '$total',
+              highlight: total > 0,
+            ),
+            _MetricRow(
+              label: 'Last 5 min',
+              value: '${errors['last5min'] ?? 0}',
+              highlight: (errors['last5min'] ?? 0) > 0,
+            ),
+            _MetricRow(
+              label: 'Retrieval Errors',
+              value: '${errors['retrieval'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'Ingestion Errors',
+              value: '${errors['ingestion'] ?? 0}',
+            ),
+            _MetricRow(
+              label: 'Storage Errors',
+              value: '${errors['storage'] ?? 0}',
+            ),
           ],
         ),
       ),
@@ -364,7 +529,12 @@ class _ActivityPageState extends State<ActivityPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Recent Sessions', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+            Text(
+              'Recent Sessions',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 12),
             if (_sessions.isEmpty)
               Center(
@@ -372,9 +542,18 @@ class _ActivityPageState extends State<ActivityPage> {
                   padding: const EdgeInsets.all(32),
                   child: Column(
                     children: [
-                      Icon(Icons.inbox_rounded, size: 40, color: colorScheme.onSurface.withValues(alpha: 0.2)),
+                      Icon(
+                        Icons.inbox_rounded,
+                        size: 40,
+                        color: colorScheme.onSurface.withValues(alpha: 0.2),
+                      ),
                       const SizedBox(height: 8),
-                      Text('No sessions captured yet', style: TextStyle(color: colorScheme.onSurface.withValues(alpha: 0.4))),
+                      Text(
+                        'No sessions captured yet',
+                        style: TextStyle(
+                          color: colorScheme.onSurface.withValues(alpha: 0.4),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -394,15 +573,34 @@ class _MetricTile extends StatelessWidget {
   final String label;
   final String value;
   final Color color;
-  const _MetricTile({required this.label, required this.value, required this.color});
+  const _MetricTile({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Text(value, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color)),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
         const SizedBox(height: 4),
-        Text(label, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.5),
+          ),
+        ),
       ],
     );
   }
@@ -412,7 +610,11 @@ class _MetricRow extends StatelessWidget {
   final String label;
   final String value;
   final bool highlight;
-  const _MetricRow({required this.label, required this.value, this.highlight = false});
+  const _MetricRow({
+    required this.label,
+    required this.value,
+    this.highlight = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -422,12 +624,15 @@ class _MetricRow extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: Theme.of(context).textTheme.bodySmall),
-          Text(value, style: TextStyle(
-            fontWeight: FontWeight.w600,
-            fontSize: 13,
-            fontFamily: 'monospace',
-            color: highlight ? Colors.orange[300] : null,
-          )),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              fontFamily: 'monospace',
+              color: highlight ? Colors.orange[300] : null,
+            ),
+          ),
         ],
       ),
     );
@@ -443,22 +648,59 @@ class _SessionRow extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final status = session['searchableStatus'] ?? 'unknown';
-    final statusColors = {'searchable': Colors.green, 'processing': Colors.blue, 'pending': Colors.grey, 'failed': Colors.red};
+    final statusColors = {
+      'searchable': Colors.green,
+      'processing': Colors.blue,
+      'pending': Colors.grey,
+      'failed': Colors.red,
+    };
 
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.2)))),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.2),
+          ),
+        ),
+      ),
       child: Row(
         children: [
-          Container(width: 8, height: 8, decoration: BoxDecoration(color: statusColors[status] ?? Colors.grey, shape: BoxShape.circle)),
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: statusColors[status] ?? Colors.grey,
+              shape: BoxShape.circle,
+            ),
+          ),
           const SizedBox(width: 12),
-          Expanded(child: Text((session['id'] ?? '').toString().substring(0, 8), style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-          Text(session['developerId'] ?? '', style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.5))),
+          Expanded(
+            child: Text(
+              (session['id'] ?? '').toString().substring(0, 8),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+          Text(
+            session['developerId'] ?? '',
+            style: TextStyle(
+              fontSize: 11,
+              color: colorScheme.onSurface.withValues(alpha: 0.5),
+            ),
+          ),
           const SizedBox(width: 12),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(color: (statusColors[status] ?? Colors.grey).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
-            child: Text(status, style: TextStyle(fontSize: 10, color: statusColors[status])),
+            decoration: BoxDecoration(
+              color: (statusColors[status] ?? Colors.grey).withValues(
+                alpha: 0.1,
+              ),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              status,
+              style: TextStyle(fontSize: 10, color: statusColors[status]),
+            ),
           ),
         ],
       ),

@@ -305,60 +305,109 @@ class _DataFlowDiagram extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final steps = [
+
+    final writeSteps = [
       'Capture',
-      'Raw S3 PUT',
+      'S3 PUT',
       'Queue',
       'Segment',
       'Embed',
-      'Extract Facts',
+      'Facts',
+      'Dedup',
+      'Graph',
+      'Contradictions',
       'Index',
     ];
+    final readSteps = [
+      'Query',
+      'Embed',
+      '4-Signal Search',
+      'RRF Fusion',
+      'Rank',
+      'Results',
+    ];
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: steps.asMap().entries.map((entry) {
-          final i = entry.key;
-          final step = entry.value;
-          return Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primaryContainer.withValues(
-                    alpha: 0.3,
-                  ),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: theme.colorScheme.primary.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: Text(
-                  step,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: theme.colorScheme.primary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              if (i < steps.length - 1)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Icon(
-                    Icons.arrow_forward,
-                    size: 14,
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.3),
-                  ),
-                ),
-            ],
-          );
-        }).toList(),
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Write Path (Ingestion)', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: _buildStepRow(
+              theme,
+              writeSteps,
+              theme.colorScheme.primary,
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+        Text('Read Path (Retrieval)', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: _buildStepRow(theme, readSteps, Colors.green)),
+        ),
+        const SizedBox(height: 20),
+        Text('Intelligence (Background)', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: _buildStepRow(theme, [
+              'Compaction',
+              'Contradiction Scan',
+              'Confidence Decay',
+              'Feedback → Weights',
+            ], Colors.orange),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'After indexing, data is immediately searchable via the 4-signal hybrid engine (semantic, keyword, entity, graph). '
+          'Users access it through Search, Context, Reflect, MCP tools, and the Python/JS SDKs.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
     );
+  }
+
+  List<Widget> _buildStepRow(ThemeData theme, List<String> steps, Color color) {
+    return steps.asMap().entries.map((entry) {
+      final i = entry.key;
+      final step = entry.value;
+      return Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: color.withValues(alpha: 0.3)),
+            ),
+            child: Text(
+              step,
+              style: TextStyle(
+                fontSize: 11,
+                color: color,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          if (i < steps.length - 1)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              child: Icon(
+                Icons.arrow_forward,
+                size: 12,
+                color: color.withValues(alpha: 0.5),
+              ),
+            ),
+        ],
+      );
+    }).toList();
   }
 }
