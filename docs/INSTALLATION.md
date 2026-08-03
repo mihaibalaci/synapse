@@ -74,7 +74,24 @@ sudo deploy/tune-resources.sh           # Apply optimal settings
 sudo deploy/tune-resources.sh --dry-run # Preview without changes
 ```
 
-The script detects total RAM and allocates:
+### Worker Concurrency
+
+Controls how many sessions are processed in parallel. Set in `/etc/synapse/synapse.env`:
+
+```bash
+WORKER_CONCURRENCY=6    # parallel ingestion pipelines
+EMBEDDING_NUM_THREADS=4 # CPU threads per embedding call
+```
+
+| Deployment | Recommended Workers | Why |
+|-----------|--------------------:|-----|
+| CPU-only Ollama (default) | 4–8 | Embedding at ~600ms/call saturates CPU |
+| GPU Ollama | 8–16 | GPU handles parallel inference |
+| Remote embedding (TEI/OpenAI) | 16–32 | Network latency is the ceiling |
+
+`EMBEDDING_NUM_THREADS` should match your container's allocated CPU cores (not host total). In an LXC with 4 cores, set to 4. Too high causes thread thrashing.
+
+### RAM Allocation (auto-tuned)
 - **PostgreSQL shared_buffers**: 25% of RAM (keeps vector indexes in memory)
 - **PostgreSQL effective_cache_size**: 60% of RAM (better query plans)
 - **PostgreSQL work_mem**: 16–128 MB (avoids disk spills)

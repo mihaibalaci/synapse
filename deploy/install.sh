@@ -350,12 +350,41 @@ configure_worker() {
   prompt_action WORKER_ACTION "Synapse worker"
   [[ "$WORKER_ACTION" != skip ]] || return 0
   if [[ "$WORKER_ACTION" == external ]]; then log "worker marked external"; return; fi
-  prompt WORKER_CONCURRENCY "Worker concurrency" "$WORKER_CONCURRENCY"
+
+  if [[ "$INTERACTIVE" == true ]]; then
+    log ""
+    log "┌─ Performance Tuning ─────────────────────────────────────────────────┐"
+    log "│ WORKER_CONCURRENCY: parallel ingestion pipelines (goroutines).       │"
+    log "│   Each worker processes one session: segment → embed → facts → index │"
+    log "│   Bottleneck is embedding (~600ms on CPU, ~20ms with GPU).           │"
+    log "│                                                                      │"
+    log "│   Recommended:                                                       │"
+    log "│     CPU-only Ollama:  4–8  (more won't help, embedding saturates)    │"
+    log "│     GPU Ollama:       8–16 (GPU handles parallel inference)           │"
+    log "│     Remote embedding: 16–32 (network latency is the limit)           │"
+    log "│                                                                      │"
+    log "│ EMBEDDING_NUM_THREADS: CPU threads Ollama uses per embedding call.   │"
+    log "│   Match your container/VM CPU allocation, not the host total.        │"
+    log "│   In LXC with 4 allocated cores: set to 4.                           │"
+    log "│   In a VM with 8 cores: set to 8.                                    │"
+    log "│   Too high = thread thrashing. Too low = wasted CPU.                 │"
+    log "└──────────────────────────────────────────────────────────────────────┘"
+    log ""
+  fi
+
+  prompt WORKER_CONCURRENCY "Worker concurrency (parallel pipelines)" "$WORKER_CONCURRENCY"
+  prompt EMBEDDING_NUM_THREADS "Embedding CPU threads (match allocated cores)" "$EMBEDDING_NUM_THREADS"
   [[ -x /usr/local/bin/synapse || "$DRY_RUN" == true ]] || { write_runtime_env; (cd "$REPO_ROOT/go" && install_binary); }
   write_runtime_env
   run_migrations
   run install -m 0644 "$SCRIPT_DIR/systemd/synapse-worker.service" /etc/systemd/system/synapse-worker.service
   run systemctl daemon-reload; run systemctl enable --now synapse-worker
+
+  # Auto-tune PostgreSQL and Redis if this is the worker component install
+  if ! $DRY_RUN && [[ -f "$SCRIPT_DIR/tune-resources.sh" ]]; then
+    log "Applying resource tuning based on detected RAM..."
+    bash "$SCRIPT_DIR/tune-resources.sh" 2>/dev/null || true
+  fi
 }
 configure_ui() {
   prompt_action UI_ACTION "Flutter admin UI"
