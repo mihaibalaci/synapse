@@ -683,12 +683,53 @@ func handleLearningTrigger(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleTrending(w http.ResponseWriter, r *http.Request) {
-	// Returns currently trending topics (convergence events)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"trending": []any{},
-		"count":    0,
-		"message":  "Trending topics appear when 3+ engineers ask about the same topic within 1 hour",
-	})
+	claims := auth.GetClaims(r)
+	orgID := ""
+	if claims != nil {
+		orgID = claims.OrganizationID
+	}
+	ctx := r.Context()
+	app := appFromRequest(r)
+
+	// Trending = entities that appear most frequently in recent facts (last 7 days)
+	rows, err := app.DB.Query(ctx, `
+		SELECT entity, count(*) AS mentions, MAX(created_at) AS last_seen
+		FROM (
+			SELECT unnest(entities) AS entity, created_at
+			FROM memory_facts
+			WHERE organization_id = $1
+				AND temporal_valid_until IS NULL
+				AND created_at > NOW() - interval '7 days'
+		) sub
+		GROUP BY entity
+		HAVING count(*) >= 2
+		ORDER BY mentions DESC
+		LIMIT 20`, orgID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"trending": []any{}, "count": 0})
+		return
+	}
+	defer rows.Close()
+
+	type trend struct {
+		Entity   string `json:"entity"`
+		Mentions int    `json:"mentions"`
+		LastSeen string `json:"lastSeen"`
+	}
+	var trending []trend
+	for rows.Next() {
+		var t trend
+		var lastSeen time.Time
+		if err := rows.Scan(&t.Entity, &t.Mentions, &lastSeen); err != nil {
+			continue
+		}
+		t.LastSeen = lastSeen.Format(time.RFC3339)
+		trending = append(trending, t)
+	}
+	if trending == nil {
+		trending = []trend{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"trending": trending, "count": len(trending)})
 }
 
 func handleMetrics(w http.ResponseWriter, r *http.Request) {
