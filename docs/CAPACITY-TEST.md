@@ -153,6 +153,76 @@ A GPU would reduce the 600ms embedding to ~20ms, making cold search ~210ms total
 
 ---
 
+## Run 3: Warm System (indexes cached after sustained load)
+
+After multiple test runs, PostgreSQL shared_buffers are warm with HNSW indexes fully resident.
+
+### Burst Capture
+
+| Metric | Run 2 (initial tune) | Run 3 (warm) |
+|--------|---------------------|--------------|
+| Duration | 13s | **13s** |
+| Throughput | 153 req/sec | **142 req/sec** |
+| Errors | 0 | 0 |
+| Dead letters | 0 | 0 |
+
+### Search Latency
+
+| Query | Run 1 (default) | Run 2 (tuned) | Run 3 (warm) |
+|-------|-----------------|---------------|--------------|
+| 1st (cold) | 1,200ms | 808ms | **408ms** |
+| Cached | <2ms | <2ms | **<1ms** |
+
+### Context Retrieval
+
+| Query | Run 1 | Run 2 | Run 3 |
+|-------|-------|-------|-------|
+| 1st (cold) | 622ms | 796ms | **551ms** |
+| Cached | 2.4–4ms | 1.4–1.7ms | **1.2–1.7ms** |
+
+### Capture (single)
+
+| Metric | Run 1 | Run 2 | Run 3 |
+|--------|-------|-------|-------|
+| Average | 32ms | 50ms | **39ms** |
+| Min | 27ms | 28ms | **26ms** |
+
+### Facts Query
+
+| Query | Run 1 | Run 2 | Run 3 |
+|-------|-------|-------|-------|
+| 1st | 2.9ms | 4.9ms | **6ms** (heavier DB) |
+| Subsequent | <1.1ms | <1.9ms | **1.2ms** |
+
+### System State
+
+| Resource | Value |
+|----------|-------|
+| Memory | 903 MB / 8.9 GB |
+| Queue | 1,857 remaining |
+| Dead letters | 0 |
+| Errors | 0 |
+| Load | 10.51 |
+
+---
+
+## All Runs Comparison
+
+| Metric | Default Config | After Tuning | Warm System |
+|--------|---------------|--------------|-------------|
+| **Cold search** | 1,200ms | 808ms (-33%) | **408ms (-66%)** |
+| **Cached search** | <2ms | <2ms | **<1ms** |
+| **Cached context** | 4ms | 1.5ms | **1.4ms** |
+| **Burst throughput** | 133/sec | 153/sec | 142/sec |
+| **Capture** | 32ms | 50ms | 39ms |
+| **Errors** | 0 | 0 | 0 |
+
+### Key Finding
+
+Cold search improved from **1,200ms to 408ms (66% reduction)** after tuning + warm cache. The HNSW vector index being fully resident in shared_buffers eliminates disk I/O for the PostgreSQL portion of search. The remaining ~400ms is almost entirely Ollama CPU embedding.
+
+---
+
 ## Scaling Recommendations
 
 1. **GPU for Ollama** — Cold search: 808ms → ~210ms; ingestion: 3/sec → ~50/sec
