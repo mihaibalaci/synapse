@@ -171,23 +171,40 @@ class _SideNav extends StatelessWidget {
             path: '/system',
             currentPath: currentPath,
           ),
-          _NavItem(
-            icon: Icons.timeline_rounded,
-            label: 'Activity',
-            path: '/activity',
+          _ExpandableNavGroup(
+            icon: Icons.settings_suggest_rounded,
+            label: 'System Admin',
             currentPath: currentPath,
-          ),
-          _NavItem(
-            icon: Icons.settings_rounded,
-            label: 'Configuration',
-            path: '/settings',
-            currentPath: currentPath,
-          ),
-          _NavItem(
-            icon: Icons.explore_rounded,
-            label: 'Memory',
-            path: '/memory',
-            currentPath: currentPath,
+            children: [
+              _NavItem(
+                icon: Icons.timeline_rounded,
+                label: 'Activity',
+                path: '/activity',
+                currentPath: currentPath,
+                indent: true,
+              ),
+              _NavItem(
+                icon: Icons.settings_rounded,
+                label: 'Configuration',
+                path: '/settings',
+                currentPath: currentPath,
+                indent: true,
+              ),
+              _NavItem(
+                icon: Icons.explore_rounded,
+                label: 'Memory',
+                path: '/memory',
+                currentPath: currentPath,
+                indent: true,
+              ),
+              _NavItem(
+                icon: Icons.engineering_rounded,
+                label: 'Operations',
+                path: '/operations',
+                currentPath: currentPath,
+                indent: true,
+              ),
+            ],
           ),
           _NavItem(
             icon: Icons.search_rounded,
@@ -205,12 +222,6 @@ class _SideNav extends StatelessWidget {
             icon: Icons.vpn_key_rounded,
             label: 'API Keys',
             path: '/keys',
-            currentPath: currentPath,
-          ),
-          _NavItem(
-            icon: Icons.engineering_rounded,
-            label: 'Operations',
-            path: '/operations',
             currentPath: currentPath,
           ),
           const Spacer(),
@@ -256,12 +267,14 @@ class _NavItem extends StatelessWidget {
   final String label;
   final String path;
   final String currentPath;
+  final bool indent;
 
   const _NavItem({
     required this.icon,
     required this.label,
     required this.path,
     required this.currentPath,
+    this.indent = false,
   });
 
   @override
@@ -271,7 +284,12 @@ class _NavItem extends StatelessWidget {
     final colorScheme = theme.colorScheme;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      padding: EdgeInsets.only(
+        left: indent ? 24 : 12,
+        right: 12,
+        top: 2,
+        bottom: 2,
+      ),
       child: Material(
         color: isActive
             ? colorScheme.primaryContainer.withValues(alpha: 0.3)
@@ -286,7 +304,7 @@ class _NavItem extends StatelessWidget {
               children: [
                 Icon(
                   icon,
-                  size: 20,
+                  size: indent ? 16 : 20,
                   color: isActive
                       ? colorScheme.primary
                       : colorScheme.onSurface.withValues(alpha: 0.6),
@@ -295,6 +313,7 @@ class _NavItem extends StatelessWidget {
                 Text(
                   label,
                   style: theme.textTheme.bodyMedium?.copyWith(
+                    fontSize: indent ? 13 : null,
                     color: isActive
                         ? colorScheme.primary
                         : colorScheme.onSurface.withValues(alpha: 0.8),
@@ -306,6 +325,105 @@ class _NavItem extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ExpandableNavGroup extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final String currentPath;
+  final List<_NavItem> children;
+
+  const _ExpandableNavGroup({
+    required this.icon,
+    required this.label,
+    required this.currentPath,
+    required this.children,
+  });
+
+  @override
+  State<_ExpandableNavGroup> createState() => _ExpandableNavGroupState();
+}
+
+class _ExpandableNavGroupState extends State<_ExpandableNavGroup> {
+  bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-expand if a child is active
+    _expanded = widget.children.any((c) => c.path == widget.currentPath);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ExpandableNavGroup oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.children.any((c) => c.path == widget.currentPath)) {
+      _expanded = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final hasActiveChild = widget.children.any(
+      (c) => c.path == widget.currentPath,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            child: InkWell(
+              onTap: () => setState(() => _expanded = !_expanded),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      widget.icon,
+                      size: 20,
+                      color: hasActiveChild
+                          ? colorScheme.primary
+                          : colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        widget.label,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: hasActiveChild
+                              ? colorScheme.primary
+                              : colorScheme.onSurface.withValues(alpha: 0.8),
+                          fontWeight: hasActiveChild
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      _expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 18,
+                      color: colorScheme.onSurface.withValues(alpha: 0.4),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (_expanded) ...widget.children,
+      ],
     );
   }
 }
