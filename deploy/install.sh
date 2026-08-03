@@ -433,5 +433,12 @@ selected api && configure_api
 selected worker && configure_worker
 selected ui && configure_ui
 selected nginx && configure_nginx
+
+# Auto-tune PostgreSQL and Redis based on detected RAM
+if [[ -z "$ONLY_COMPONENT" ]] && ! $DRY_RUN; then
+  log "Applying resource tuning based on detected RAM..."
+  bash "$SCRIPT_DIR/tune-resources.sh" 2>/dev/null || log "Resource tuning skipped (services may not be ready yet)"
+fi
+
 save_state
 summary

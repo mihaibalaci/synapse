@@ -65,6 +65,29 @@ Required for compaction, reflection, and contradiction detection:
 | `OIDC_CLIENT_SECRET` | OAuth client secret |
 | `OIDC_REDIRECT_URI` | e.g. `http://your-host:8080/api/v1/auth/oidc/callback` |
 
+## Performance Tuning
+
+After installation, run the resource tuning script to automatically configure PostgreSQL and Redis based on available RAM:
+
+```bash
+sudo deploy/tune-resources.sh           # Apply optimal settings
+sudo deploy/tune-resources.sh --dry-run # Preview without changes
+```
+
+The script detects total RAM and allocates:
+- **PostgreSQL shared_buffers**: 25% of RAM (keeps vector indexes in memory)
+- **PostgreSQL effective_cache_size**: 60% of RAM (better query plans)
+- **PostgreSQL work_mem**: 16–128 MB (avoids disk spills)
+- **Redis maxmemory**: 5% of RAM with LRU eviction (longer cache retention)
+- **Remainder**: available for Ollama models and OS page cache
+
+| Total RAM | PG shared_buffers | PG effective_cache | Redis | Ollama + OS |
+|-----------|-------------------|-------------------|-------|-------------|
+| 4 GB | 1 GB | 2.4 GB | 200 MB | ~1.4 GB |
+| 8 GB | 2 GB | 4.8 GB | 400 MB | ~5.2 GB |
+| 16 GB | 4 GB | 9.6 GB | 800 MB | ~11.2 GB |
+| 32 GB | 8 GB | 19.2 GB | 1.6 GB | ~22.4 GB |
+
 ## Database Upgrades
 
 Migrations run via `synapse migrate` before API/worker startup. They are forward-only with advisory locking and SHA-256 checksums.
