@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mihaibalaci/synapse/internal/auth"
@@ -42,16 +43,17 @@ func handleListUsers(w http.ResponseWriter, r *http.Request) {
 	var users []userRow
 	for rows.Next() {
 		var u userRow
-		var lastLogin *string
-		var createdAt interface{}
+		var lastLogin *time.Time
+		var createdAt time.Time
 		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.OrganizationID, &u.Roles, &u.Disabled, &lastLogin, &createdAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "SCAN_ERROR", err.Error())
 			return
 		}
-		u.LastLoginAt = lastLogin
-		if t, ok := createdAt.(interface{ String() string }); ok {
-			u.CreatedAt = t.String()
+		if lastLogin != nil {
+			s := lastLogin.Format(time.RFC3339)
+			u.LastLoginAt = &s
 		}
+		u.CreatedAt = createdAt.Format(time.RFC3339)
 		users = append(users, u)
 	}
 	if users == nil {
