@@ -623,12 +623,52 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleLearningStats(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r)
+	orgID := ""
+	if claims != nil {
+		orgID = claims.OrganizationID
+	}
+	ctx := r.Context()
+	app := appFromRequest(r)
+
+	// Query real learning metrics from the database
+	var factsTotal, facts7d, factsSuperseded, chunksCompacted int
+	var avgConfidence float64
+
+	_ = app.DB.QueryRow(ctx, `SELECT count(*) FROM memory_facts WHERE organization_id = $1`, orgID).Scan(&factsTotal)
+	_ = app.DB.QueryRow(ctx, `SELECT count(*) FROM memory_facts WHERE organization_id = $1 AND created_at > NOW() - interval '7 days'`, orgID).Scan(&facts7d)
+	_ = app.DB.QueryRow(ctx, `SELECT count(*) FROM memory_facts WHERE organization_id = $1 AND temporal_valid_until IS NOT NULL`, orgID).Scan(&factsSuperseded)
+	_ = app.DB.QueryRow(ctx, `SELECT count(*) FROM chunks WHERE organization_id = $1 AND type = 'summary'`, orgID).Scan(&chunksCompacted)
+	_ = app.DB.QueryRow(ctx, `SELECT COALESCE(AVG(confidence), 0) FROM memory_facts WHERE organization_id = $1 AND temporal_valid_until IS NULL`, orgID).Scan(&avgConfidence)
+
+	isLearning := facts7d > 0
+	coverage := 0.0
+	if factsTotal > 0 {
+		coverage = float64(factsTotal-factsSuperseded) / float64(factsTotal)
+	}
+
+	now := time.Now()
+	weekAgo := now.AddDate(0, 0, -7)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"metrics": map[string]any{
-			"period":  map[string]string{"from": "", "to": ""},
-			"inline":  map[string]int{"factsExtracted": 0, "opinionsReinforced": 0},
-			"reflect": map[string]int{"reflectCalls": 0, "insightsWrittenBack": 0},
-			"health":  map[string]any{"isLearning": false, "confidenceTrend": 0.0, "observationCoverage": 0.0},
+			"period": map[string]string{
+				"from": weekAgo.Format(time.RFC3339),
+				"to":   now.Format(time.RFC3339),
+			},
+			"inline": map[string]int{
+				"factsExtracted":     facts7d,
+				"opinionsReinforced": factsSuperseded,
+			},
+			"reflect": map[string]int{
+				"reflectCalls":        0,
+				"insightsWrittenBack": chunksCompacted,
+			},
+			"health": map[string]any{
+				"isLearning":          isLearning,
+				"confidenceTrend":     avgConfidence,
+				"observationCoverage": coverage,
+			},
 		},
 		"health": map[string]any{"healthy": true, "reasons": []string{}},
 		"config": map[string]any{"inlineReinforcementEnabled": true, "reflectWriteBackEnabled": true},
