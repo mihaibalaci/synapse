@@ -45,6 +45,28 @@ Single Go binary + Flutter admin UI + optional Rust compute kernels.
 
 ![Data Flow Diagram](docs/assets/data-flow.svg)
 
+## Data Flow
+
+### Write Path (Ingestion)
+
+```
+Capture → S3 PUT → Queue → Segment → Embed → Facts → Dedup → Graph → Contradictions → Index
+```
+
+### Read Path (Retrieval)
+
+```
+Query → Embed → 4-Signal Search → RRF Fusion → Rank → Results
+```
+
+### Intelligence (Background)
+
+```
+Compaction → Contradiction Scan → Confidence Decay → Feedback → Weights
+```
+
+After indexing, data is immediately searchable via the 4-signal hybrid engine (semantic, keyword, entity, graph). Users access it through Search, Context, Reflect, MCP tools, and the Python/JS SDKs.
+
 ## Quick Start
 
 ```bash
