@@ -1,4 +1,4 @@
-import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_service.dart';
@@ -10,37 +10,39 @@ class GraphPage extends StatefulWidget {
 }
 
 class _GraphPageState extends State<GraphPage> {
-  final _entityController = TextEditingController();
-  final _fromController = TextEditingController();
-  final _toController = TextEditingController();
+  final _searchController = TextEditingController();
+  List<dynamic> _allEntities = [];
   List<dynamic> _edges = [];
-  List<dynamic> _important = [];
-  List<dynamic> _paths = [];
+  String? _centerEntity;
   bool _loading = false;
-  String _activeTab = 'explore';
 
   @override
   void initState() {
     super.initState();
-    _loadAllNodes();
+    _loadAll();
   }
 
-  Future<void> _loadAllNodes() async {
+  Future<void> _loadAll() async {
+    setState(() => _loading = true);
     try {
       final data = await context.read<ApiService>().get(
         '/api/v1/admin/graph/important?limit=100',
       );
-      if (mounted) setState(() => _important = data['entities'] as List? ?? []);
+      if (mounted)
+        setState(() => _allEntities = data['entities'] as List? ?? []);
     } catch (_) {}
+    if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _exploreEntity() async {
-    final entity = _entityController.text.trim();
-    if (entity.isEmpty) return;
-    setState(() => _loading = true);
+  Future<void> _selectEntity(String name) async {
+    setState(() {
+      _centerEntity = name;
+      _loading = true;
+      _searchController.text = name;
+    });
     try {
       final data = await context.read<ApiService>().get(
-        '/api/v1/admin/graph/entity/${Uri.encodeComponent(entity)}',
+        '/api/v1/admin/graph/entity/${Uri.encodeComponent(name)}',
       );
       if (mounted) setState(() => _edges = data['edges'] as List? ?? []);
     } catch (_) {
@@ -49,240 +51,325 @@ class _GraphPageState extends State<GraphPage> {
     if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _findPath() async {
-    final from = _fromController.text.trim();
-    final to = _toController.text.trim();
-    if (from.isEmpty || to.isEmpty) return;
-    setState(() => _loading = true);
-    try {
-      final data = await context.read<ApiService>().get(
-        '/api/v1/admin/graph/path?from=${Uri.encodeComponent(from)}&to=${Uri.encodeComponent(to)}',
-      );
-      if (mounted) setState(() => _paths = data['paths'] as List? ?? []);
-    } catch (_) {
-      if (mounted) setState(() => _paths = []);
-    }
-    if (mounted) setState(() => _loading = false);
+  void _clearSelection() {
+    setState(() {
+      _centerEntity = null;
+      _edges = [];
+      _searchController.clear();
+    });
   }
 
-  void _selectEntity(String name) {
-    _entityController.text = name;
-    setState(() => _activeTab = 'explore');
-    _exploreEntity();
+  void _onSearch(String query) {
+    if (query.trim().isEmpty) {
+      _clearSelection();
+      return;
+    }
+    _selectEntity(query.trim());
   }
 
   @override
   void dispose() {
-    _entityController.dispose();
-    _fromController.dispose();
-    _toController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          child: Row(
+            children: [
+              Text(
+                'Knowledge Graph',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              SizedBox(
+                width: 300,
+                child: TextField(
+                  controller: _searchController,
+                  onSubmitted: _onSearch,
+                  decoration: InputDecoration(
+                    hintText: 'Search entity...',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    suffixIcon: _centerEntity != null
+                        ? IconButton(
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: _clearSelection,
+                          )
+                        : null,
+                    isDense: true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_loading) const LinearProgressIndicator(),
+        Expanded(
+          child: _centerEntity != null
+              ? _buildMindMap(theme)
+              : _buildOverview(theme),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOverview(ThemeData theme) {
+    if (_allEntities.isEmpty) {
+      return const Center(
+        child: Text(
+          'No graph data yet. Capture sessions to build the knowledge graph.',
+        ),
+      );
+    }
+    final maxWeight = _allEntities.fold<double>(1, (prev, e) {
+      final w = ((e as Map)['totalWeight'] as num?)?.toDouble() ?? 1;
+      return w > prev ? w : prev;
+    });
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Knowledge Graph',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
+            '${_allEntities.length} entities. Click to explore connections:',
+            style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              ChoiceChip(
-                label: const Text('Explore'),
-                selected: _activeTab == 'explore',
-                onSelected: (_) => setState(() => _activeTab = 'explore'),
-              ),
-              const SizedBox(width: 8),
-              ChoiceChip(
-                label: const Text('Path'),
-                selected: _activeTab == 'path',
-                onSelected: (_) => setState(() => _activeTab = 'path'),
-              ),
-            ],
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _allEntities.map((e) {
+              final entity = e as Map<String, dynamic>;
+              final name = entity['name'] as String? ?? '';
+              final weight = (entity['totalWeight'] as num?)?.toDouble() ?? 1;
+              final normalized = (weight / maxWeight).clamp(0.3, 1.0);
+              final fontSize = 12.0 + (normalized * 6);
+              return ActionChip(
+                label: Text(name, style: TextStyle(fontSize: fontSize)),
+                backgroundColor: theme.colorScheme.primaryContainer.withValues(
+                  alpha: normalized,
+                ),
+                side: BorderSide(
+                  color: theme.colorScheme.primary.withValues(
+                    alpha: normalized * 0.6,
+                  ),
+                ),
+                onPressed: () => _selectEntity(name),
+              );
+            }).toList(),
           ),
-          const SizedBox(height: 16),
-          if (_loading) const LinearProgressIndicator(),
-          Expanded(child: _buildTab(theme)),
         ],
       ),
     );
   }
 
-  Widget _buildTab(ThemeData theme) {
-    switch (_activeTab) {
-      case 'path':
-        return Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _fromController,
-                    decoration: const InputDecoration(
-                      labelText: 'From entity',
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _toController,
-                    decoration: const InputDecoration(
-                      labelText: 'To entity',
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton(
-                  onPressed: _findPath,
-                  child: const Text('Find Path'),
-                ),
-              ],
+  Widget _buildMindMap(ThemeData theme) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return CustomPaint(
+          size: Size(constraints.maxWidth, constraints.maxHeight),
+          painter: _MindMapPainter(
+            center: _centerEntity!,
+            edges: _edges,
+            theme: theme,
+          ),
+          child: Stack(
+            children: _buildClickableNodes(
+              constraints.maxWidth,
+              constraints.maxHeight,
+              theme,
             ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: _paths.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'Enter two entities to find connection paths',
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: _paths.length,
-                      itemBuilder: (_, i) {
-                        final path = (_paths[i] as List).cast<String>();
-                        return Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Text(
-                              path.join(' → '),
-                              style: theme.textTheme.bodyMedium,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
+          ),
         );
-      default:
-        return Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _entityController,
-                    decoration: const InputDecoration(
-                      labelText: 'Entity name',
-                      isDense: true,
-                    ),
-                    onSubmitted: (_) => _exploreEntity(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton(
-                  onPressed: _exploreEntity,
-                  child: const Text('Explore'),
-                ),
-                if (_entityController.text.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () {
-                      _entityController.clear();
-                      setState(() => _edges = []);
-                    },
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: _entityController.text.isEmpty && _edges.isEmpty
-                  ? _buildMindMap(theme)
-                  : _edges.isEmpty
-                  ? const Center(child: Text('No connections found'))
-                  : ListView.builder(
-                      itemCount: _edges.length,
-                      itemBuilder: (_, i) {
-                        final e = _edges[i] as Map<String, dynamic>;
-                        return ListTile(
-                          leading: const Icon(Icons.link, size: 18),
-                          title: Text(e['neighbor'] ?? ''),
-                          subtitle: Text(
-                            '${e['relation']} (weight: ${e['weight']})',
-                          ),
-                          onTap: () => _selectEntity(e['neighbor'] ?? ''),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        );
-    }
+      },
+    );
   }
 
-  Widget _buildMindMap(ThemeData theme) {
-    if (_important.isEmpty) {
-      return const Center(
-        child: Text(
-          'No graph data yet.\nCapture sessions to build the knowledge graph.',
-          textAlign: TextAlign.center,
-        ),
-      );
-    }
-    final maxWeight = _important.fold<double>(1, (prev, e) {
-      final w = ((e as Map)['totalWeight'] as num?)?.toDouble() ?? 1;
-      return w > prev ? w : prev;
-    });
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${_important.length} entities in the knowledge graph. Click to explore:',
-              style: theme.textTheme.bodyMedium,
+  List<Widget> _buildClickableNodes(
+    double width,
+    double height,
+    ThemeData theme,
+  ) {
+    final centerX = width / 2;
+    final centerY = height / 2;
+    final radius = min(width, height) * 0.35;
+    final nodes = <Widget>[];
+
+    // Center node
+    nodes.add(
+      Positioned(
+        left: centerX - 55,
+        top: centerY - 18,
+        child: GestureDetector(
+          onTap: () {},
+          child: Container(
+            width: 110,
+            height: 36,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.4),
+                  blurRadius: 12,
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: _important.map((e) {
-                final entity = e as Map<String, dynamic>;
-                final name = entity['name'] as String? ?? '';
-                final weight = (entity['totalWeight'] as num?)?.toDouble() ?? 1;
-                final normalized = (weight / maxWeight).clamp(0.2, 1.0);
-                final fontSize = 11.0 + (normalized * 8);
-                return ActionChip(
-                  label: Text(name, style: TextStyle(fontSize: fontSize)),
-                  backgroundColor: theme.colorScheme.primaryContainer
-                      .withValues(alpha: normalized),
-                  side: BorderSide(
-                    color: theme.colorScheme.primary.withValues(
-                      alpha: normalized * 0.5,
-                    ),
-                  ),
-                  onPressed: () => _selectEntity(name),
-                );
-              }).toList(),
+            alignment: Alignment.center,
+            child: Text(
+              _centerEntity!,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
-          ],
+          ),
         ),
       ),
     );
+
+    // Connected nodes in a circle
+    for (int i = 0; i < _edges.length && i < 12; i++) {
+      final edge = _edges[i] as Map<String, dynamic>;
+      final name = edge['neighbor'] as String? ?? '';
+      final weight = (edge['weight'] as num?)?.toDouble() ?? 0.5;
+      final angle = (2 * pi * i / min(_edges.length, 12)) - pi / 2;
+      final nodeRadius = radius * (0.7 + weight * 0.3);
+      final nx = centerX + nodeRadius * cos(angle) - 45;
+      final ny = centerY + nodeRadius * sin(angle) - 14;
+
+      nodes.add(
+        Positioned(
+          left: nx,
+          top: ny,
+          child: GestureDetector(
+            onTap: () => _selectEntity(name),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 70, maxWidth: 120),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: theme.colorScheme.secondary.withValues(
+                      alpha: 0.5 + weight * 0.5,
+                    ),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: theme.colorScheme.secondary.withValues(alpha: 0.2),
+                      blurRadius: 6,
+                    ),
+                  ],
+                ),
+                child: Text(
+                  name,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 11 + weight * 2,
+                    fontWeight: weight > 0.5
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                    color: theme.colorScheme.onSecondaryContainer,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Hint at bottom
+    nodes.add(
+      Positioned(
+        bottom: 12,
+        left: 0,
+        right: 0,
+        child: Center(
+          child: Text(
+            '${_edges.length} connections • Click a node to explore deeper',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return nodes;
   }
+}
+
+class _MindMapPainter extends CustomPainter {
+  final String center;
+  final List<dynamic> edges;
+  final ThemeData theme;
+
+  _MindMapPainter({
+    required this.center,
+    required this.edges,
+    required this.theme,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final centerX = size.width / 2;
+    final centerY = size.height / 2;
+    final radius = min(size.width, size.height) * 0.35;
+    final centerPoint = Offset(centerX, centerY);
+
+    for (int i = 0; i < edges.length && i < 12; i++) {
+      final edge = edges[i] as Map<String, dynamic>;
+      final weight = (edge['weight'] as num?)?.toDouble() ?? 0.5;
+      final angle = (2 * pi * i / min(edges.length, 12)) - pi / 2;
+      final nodeRadius = radius * (0.7 + weight * 0.3);
+      final endPoint = Offset(
+        centerX + nodeRadius * cos(angle),
+        centerY + nodeRadius * sin(angle),
+      );
+
+      final paint = Paint()
+        ..color = theme.colorScheme.secondary.withValues(
+          alpha: 0.3 + weight * 0.4,
+        )
+        ..strokeWidth = 1.5 + weight * 2
+        ..style = PaintingStyle.stroke;
+
+      canvas.drawLine(centerPoint, endPoint, paint);
+
+      // Draw a small dot at the connection point
+      final dotPaint = Paint()
+        ..color = theme.colorScheme.secondary.withValues(alpha: 0.5)
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(endPoint, 3, dotPaint);
+    }
+
+    // Center glow
+    final glowPaint = Paint()
+      ..color = theme.colorScheme.primary.withValues(alpha: 0.1)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(centerPoint, 30, glowPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
