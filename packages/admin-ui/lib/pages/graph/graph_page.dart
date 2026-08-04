@@ -39,8 +39,8 @@ class _GraphPageState extends State<GraphPage>
   void _simulatePhysics() {
     final cx = _canvasSize.width / 2;
     final cy = _canvasSize.height / 2;
-    const damping = 0.97;
-    const repulsion = 400.0;
+    const damping = 0.985;
+    const repulsion = 200.0;
 
     for (final node in _nodes) {
       // Attract toward ideal radius (closer = higher weight)
@@ -48,14 +48,14 @@ class _GraphPageState extends State<GraphPage>
       final dx = node.x - cx;
       final dy = node.y - cy;
       final dist = sqrt(dx * dx + dy * dy).clamp(1.0, 1000.0);
-      final attraction = (dist - idealDist) * 0.001;
+      final attraction = (dist - idealDist) * 0.0005;
       node.vx -= (dx / dist) * attraction;
       node.vy -= (dy / dist) * attraction;
 
       // Very gentle circular drift for subtle organic motion
       final angle = atan2(dy, dx);
-      node.vx += cos(angle + pi / 2) * 0.015;
-      node.vy += sin(angle + pi / 2) * 0.015;
+      node.vx += cos(angle + pi / 2) * 0.007;
+      node.vy += sin(angle + pi / 2) * 0.007;
 
       // Repel from other nodes
       for (final other in _nodes) {
@@ -65,8 +65,8 @@ class _GraphPageState extends State<GraphPage>
         final odist = sqrt(odx * odx + ody * ody).clamp(1.0, 500.0);
         if (odist < 80) {
           final force = repulsion / (odist * odist);
-          node.vx += (odx / odist) * force * 0.3;
-          node.vy += (ody / odist) * force * 0.3;
+          node.vx += (odx / odist) * force * 0.15;
+          node.vy += (ody / odist) * force * 0.15;
         }
       }
 
@@ -612,9 +612,9 @@ class _AnimatedLinePainter extends CustomPainter {
       // Connection line
       final paint = Paint()
         ..color = theme.colorScheme.secondary.withValues(
-          alpha: 0.2 + node.weight * 0.5,
+          alpha: 0.12 + node.weight * 0.2,
         )
-        ..strokeWidth = 1.0 + node.weight * 2.5
+        ..strokeWidth = 0.5 + node.weight * 1.0
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round;
 
