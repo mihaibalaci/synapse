@@ -153,7 +153,12 @@ func compactSession(ctx context.Context, db *storage.DB, embedder *ingestion.Emb
 		}
 	}
 
-	summary, err := callLLM(ctx, cfg, contentBuilder.String())
+	// COST OPTIMIZATION: Compress context before sending to LLM (30-60% token reduction)
+	rawContent := contentBuilder.String()
+	compressedContent := CompressForLLM(rawContent, 8000)
+	tokensSavedByCompression := int64(len(rawContent)/4 - len(compressedContent)/4)
+
+	summary, err := callLLM(ctx, cfg, compressedContent)
 	if err != nil {
 		return fmt.Errorf("LLM summarize: %w", err)
 	}
@@ -214,24 +219,28 @@ func compactSession(ctx context.Context, db *storage.DB, embedder *ingestion.Emb
 	result.SessionsCompacted++
 	result.ChunksArchived += len(chunks)
 	result.SummariesCreated++
-	result.TokensSaved += totalTokens - int64(estimateTokens(summary))
+	result.TokensSaved += totalTokens - int64(estimateTokens(summary)) + tokensSavedByCompression
 	return nil
 }
 
 func callLLM(ctx context.Context, cfg Config, content string) (string, error) {
-	system := `You are a technical knowledge summarizer. Given a set of conversation chunks from a software engineering session, produce a concise summary that preserves:
+	// OUTPUT OPTIMIZATION: Apply verbosity steering to reduce output tokens
+	system := OptimizedSystemPrompt(`You are a technical knowledge summarizer. Given a set of conversation chunks from a software engineering session, produce a concise summary that preserves:
 - Key decisions and their reasoning
 - Technical patterns and constraints discovered
 - Action items and open questions
-Keep the summary factual and under 500 words. Do not invent information not present in the chunks.`
+Keep the summary factual and under 500 words. Do not invent information not present in the chunks.`)
+
+	// EFFORT ROUTING: Compaction is routine — use minimal effort settings
+	effort := RouteEffort("compaction")
 
 	switch cfg.LLMProvider {
 	case "ollama":
 		return callOllama(ctx, cfg, system, content)
 	case "openai":
-		return callOpenAI(ctx, cfg, system, content)
+		return callOpenAICompact(ctx, cfg, system, content, effort)
 	case "anthropic":
-		return callAnthropic(ctx, cfg, system, content)
+		return callAnthropicCompact(ctx, cfg, system, content, effort)
 	default:
 		return "", fmt.Errorf("compaction requires a configured LLM provider (ollama/openai/anthropic), got %q", cfg.LLMProvider)
 	}
@@ -251,6 +260,35 @@ func callOllama(ctx context.Context, cfg Config, system, user string) (string, e
 		},
 	}
 	return doLLMRequest(ctx, baseURL+"/api/chat", body, nil, "ollama")
+}
+
+func callOpenAICompact(ctx context.Context, cfg Config, system, user string, effort EffortLevel) (string, error) {
+	body := map[string]any{
+		"model":       cfg.LLMModel,
+		"max_tokens":  MaxTokensForEffort(effort),
+		"temperature": TemperatureForEffort(effort),
+		"messages": []map[string]string{
+			{"role": "system", "content": system},
+			{"role": "user", "content": user},
+		},
+	}
+	headers := map[string]string{"Authorization": "Bearer " + cfg.LLMAPIKey}
+	return doLLMRequest(ctx, "https://api.openai.com/v1/chat/completions", body, headers, "openai")
+}
+
+func callAnthropicCompact(ctx context.Context, cfg Config, system, user string, effort EffortLevel) (string, error) {
+	body := map[string]any{
+		"model":       cfg.LLMModel,
+		"max_tokens":  MaxTokensForEffort(effort),
+		"temperature": TemperatureForEffort(effort),
+		"system":      system,
+		"messages":    []map[string]string{{"role": "user", "content": user}},
+	}
+	headers := map[string]string{
+		"x-api-key":         cfg.LLMAPIKey,
+		"anthropic-version": "2023-06-01",
+	}
+	return doLLMRequest(ctx, "https://api.anthropic.com/v1/messages", body, headers, "anthropic")
 }
 
 func callOpenAI(ctx context.Context, cfg Config, system, user string) (string, error) {

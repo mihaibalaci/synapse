@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mihaibalaci/synapse/internal/auth"
+	"github.com/mihaibalaci/synapse/internal/compaction"
 	"github.com/mihaibalaci/synapse/internal/models"
 	"github.com/mihaibalaci/synapse/internal/retrieval"
 )
@@ -80,6 +81,9 @@ func handleReflectReal(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	// COST OPTIMIZATION: Compress context before sending to LLM
+	contextText = compaction.CompressForLLM(contextText, 6000)
 
 	// 4. Call LLM for reasoning
 	answer, insights, err := callReflectLLM(ctx, req.Query, contextText, req.MaxFacts)
@@ -183,6 +187,9 @@ Format your response as JSON:
 {"answer": "...", "insights": [{"content": "...", "type": "decision|lesson|pattern|constraint", "entities": ["entity1"]}]}
 
 Do not invent information not present in the context.`, maxInsights)
+
+	// OUTPUT OPTIMIZATION: Apply verbosity steering
+	system = compaction.OptimizedSystemPrompt(system)
 
 	user := fmt.Sprintf("QUESTION: %s\n\nCONTEXT:\n%s", query, contextText)
 
