@@ -174,6 +174,17 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 		r.Get("/api/v1/keys", handleListAPIKeys)
 		r.Post("/api/v1/keys", handleCreateAPIKey)
 		r.Delete("/api/v1/keys/{id}", handleRevokeAPIKey)
+
+		// Cross-agent shared context
+		r.Put("/api/v1/context/shared", handlePutSharedContext)
+		r.Get("/api/v1/context/shared", handleGetSharedContext)
+
+		// Session outcome tracking
+		r.Post("/api/v1/sessions/{sessionId}/outcome", handleMarkSessionOutcome)
+
+		// Token cost attribution (admin)
+		r.Get("/api/v1/stats/token-costs", handleTokenCosts)
+		r.Get("/api/v1/admin/learn", handleLearnFromFailures)
 	})
 
 	return r

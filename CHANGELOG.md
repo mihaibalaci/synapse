@@ -4,6 +4,44 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-03
+
+### Added
+
+#### Agent Wrapping (`synapse wrap <agent>`)
+- Zero-config MCP setup for Claude, Cursor, Codex, Kiro, VS Code, Continue, Cline.
+- Auto-detects binary path and generates correct MCP JSON config.
+- `synapse unwrap <agent>` to remove configuration.
+- Supports `--token`, `--url`, `--org` flags.
+
+#### Context Compression
+- `CompressForLLM()` reduces context tokens 30–60% before LLM calls.
+- Collapses repeated lines, removes noise (UUIDs, timestamps, IPs, hashes).
+- Truncates oversized code blocks while preserving start/end.
+- Applied in compaction and reflect pipelines.
+
+#### Session Outcome Tracking + Learning
+- `POST /api/v1/sessions/{id}/outcome` — mark sessions as success/failure/abandoned.
+- `GET /api/v1/admin/learn` — mine failure patterns and generate recommendations.
+- Tracks outcome reason and timestamp in session metadata.
+
+#### Cross-Agent Shared Context
+- `PUT /api/v1/context/shared` — push context from any agent (Claude, Cursor, Codex).
+- `GET /api/v1/context/shared` — pull shared context, with optional key filter.
+- Content deduplication by SHA-256 hash.
+- TTL-based expiry (default 1 hour).
+
+#### Token Cost Attribution
+- `GET /api/v1/stats/token-costs` — LLM token usage breakdown by call type.
+- Tracks input/output tokens, call count, per-type attribution (compaction, reflect, contradiction).
+- Estimated USD cost based on typical API pricing.
+
+#### Output Optimization
+- `OptimizedSystemPrompt()` — adds verbosity steering to internal LLM calls.
+- `RouteEffort()` — effort routing (minimal/medium/full) by call type.
+- Appropriate max_tokens and temperature per effort level.
+- Compaction/extraction use minimal effort; reflection uses full.
+
 ## [1.0.0] - 2026-08-01
 
 ### Added
@@ -236,6 +274,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - PostgreSQL schema, Redis queue, S3 raw storage.
 - Basic JWT validation middleware.
 
+[1.1.0]: https://github.com/mihaibalaci/synapse/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mihaibalaci/synapse/compare/v0.16.0...v1.0.0
 [0.16.0]: https://github.com/mihaibalaci/synapse/compare/v0.8.0...v0.16.0
 [0.8.0]: https://github.com/mihaibalaci/synapse/compare/v0.7.0...v0.8.0

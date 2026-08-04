@@ -73,6 +73,10 @@ func main() {
 		runS3GC(cfg)
 	case "search", "facts", "history", "reflect", "insight", "status":
 		cli.Run(os.Args[1:])
+	case "wrap":
+		cli.WrapAgent(os.Args[2:])
+	case "unwrap":
+		cli.UnwrapAgent(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: synapse [serve|worker|migrate|auth-bootstrap|compact|detect-contradictions|mcp|slack|verify-storage|embed-backfill|search|facts|history|reflect|insight|status]\n", mode)
 		os.Exit(1)
