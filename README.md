@@ -52,31 +52,7 @@ Single Go binary + Flutter admin UI + optional Rust compute kernels.
 
 ## Data Flow
 
-### Write Path (Ingestion)
-
-```
-Capture → S3 PUT → Queue → Segment → Embed → Facts → Dedup → Graph → Contradictions → Index
-```
-
-### Read Path (Retrieval)
-
-```
-Query → Embed → 4-Signal Search → RRF Fusion → Rank (temporal decay + adaptive weights) → Results
-```
-
-### Intelligence (Background)
-
-```
-Compaction → Compress → LLM Summarize → Contradiction Scan → Confidence Decay → Feedback → Weights
-```
-
-### Cost Optimization (every LLM call)
-
-```
-Context → CompressForLLM (30-60% reduction) → Verbosity Steering → Effort Routing → LLM → Terse Output
-```
-
-After indexing, data is immediately searchable via the 4-signal hybrid engine (semantic, keyword, entity, graph). Users access it through Search, Context, Reflect, MCP tools, Python/JS SDKs, and cross-agent shared context.
+![Data Flow Paths](docs/assets/data-flow-paths.svg)
 
 ## Quick Start
 

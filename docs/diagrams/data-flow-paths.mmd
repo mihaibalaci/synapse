@@ -1,0 +1,20 @@
+flowchart LR
+    subgraph Write["Write Path (Ingestion)"]
+        direction LR
+        W1[Capture] --> W2[S3 PUT] --> W3[Queue] --> W4[Segment] --> W5[Embed] --> W6[Facts] --> W7[Dedup] --> W8[Graph] --> W9[Contradictions] --> W10[Index]
+    end
+
+    subgraph Read["Read Path (Retrieval)"]
+        direction LR
+        R1[Query] --> R2[Embed] --> R3[4-Signal Search] --> R4[RRF Fusion] --> R5[Adaptive Rank] --> R6[Results]
+    end
+
+    subgraph Cost["Cost Optimization (every LLM call)"]
+        direction LR
+        C1[Compress Context] --> C2[Verbosity Steering] --> C3[Effort Routing] --> C4[LLM] --> C5[Terse Output]
+    end
+
+    subgraph Intel["Intelligence (Background)"]
+        direction LR
+        I1[Compaction] --> I2[Contradictions] --> I3[Confidence Decay] --> I4[Feedback to Weights] --> I5[Session Learning]
+    end
