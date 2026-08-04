@@ -323,7 +323,7 @@ class _DataFlowDiagram extends StatelessWidget {
       'Embed',
       '4-Signal Search',
       'RRF Fusion',
-      'Rank',
+      'Adaptive Rank',
       'Results',
     ];
 
@@ -350,6 +350,24 @@ class _DataFlowDiagram extends StatelessWidget {
           child: Row(children: _buildStepRow(theme, readSteps, Colors.green)),
         ),
         const SizedBox(height: 20),
+        Text(
+          'Cost Optimization (every LLM call)',
+          style: theme.textTheme.labelLarge,
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: _buildStepRow(theme, [
+              'Compress',
+              'Verbosity Steer',
+              'Effort Route',
+              'LLM',
+              'Terse Output',
+            ], Colors.purple),
+          ),
+        ),
+        const SizedBox(height: 20),
         Text('Intelligence (Background)', style: theme.textTheme.labelLarge),
         const SizedBox(height: 8),
         SingleChildScrollView(
@@ -357,16 +375,17 @@ class _DataFlowDiagram extends StatelessWidget {
           child: Row(
             children: _buildStepRow(theme, [
               'Compaction',
-              'Contradiction Scan',
+              'Contradictions',
               'Confidence Decay',
               'Feedback → Weights',
+              'Session Learning',
             ], Colors.orange),
           ),
         ),
         const SizedBox(height: 12),
         Text(
-          'After indexing, data is immediately searchable via the 4-signal hybrid engine (semantic, keyword, entity, graph). '
-          'Users access it through Search, Context, Reflect, MCP tools, and the Python/JS SDKs.',
+          'Every LLM call is cost-optimized (30-60% fewer tokens). Knowledge quality improves over time '
+          'via contradiction detection, confidence calibration, and adaptive ranking from feedback.',
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),

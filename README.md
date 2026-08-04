@@ -2,6 +2,8 @@
 
 **The memory layer that learns.** A self-hosted knowledge system that captures AI engineering sessions, extracts atomic facts, builds a knowledge graph, detects contradictions, and provides sub-200ms 4-signal retrieval that improves with every interaction.
 
+**Also optimizes the cost of every LLM interaction** — context compression, verbosity steering, and effort routing reduce token usage 30–60% while maintaining answer quality.
+
 ## What Synapse Does
 
 | Capability | How |
@@ -12,7 +14,10 @@
 | **Search** | 4-signal hybrid: semantic (pgvector), keyword (FTS), entity overlap, graph neighbors |
 | **Learn** | LLM-powered reflection, confidence calibration, contradiction detection, adaptive ranking |
 | **Compact** | Automatic session summarization via LLM, cross-session deduplication |
-| **Observe** | Prometheus `/metrics`, structured audit log, queue visibility, S3 garbage collection |
+| **Optimize** | Context compression (30–60%), verbosity steering, effort routing for LLM calls |
+| **Share** | Cross-agent shared context with deduplication for multi-tool workflows |
+| **Observe** | Prometheus `/metrics`, token cost attribution, structured audit log, queue visibility |
+| **Wrap** | Zero-config setup: `synapse wrap claude` / `cursor` / `kiro` / `codex` |
 
 ## Architecture
 
@@ -56,20 +61,30 @@ Capture → S3 PUT → Queue → Segment → Embed → Facts → Dedup → Graph
 ### Read Path (Retrieval)
 
 ```
-Query → Embed → 4-Signal Search → RRF Fusion → Rank → Results
+Query → Embed → 4-Signal Search → RRF Fusion → Rank (temporal decay + adaptive weights) → Results
 ```
 
 ### Intelligence (Background)
 
 ```
-Compaction → Contradiction Scan → Confidence Decay → Feedback → Weights
+Compaction → Compress → LLM Summarize → Contradiction Scan → Confidence Decay → Feedback → Weights
 ```
 
-After indexing, data is immediately searchable via the 4-signal hybrid engine (semantic, keyword, entity, graph). Users access it through Search, Context, Reflect, MCP tools, and the Python/JS SDKs.
+### Cost Optimization (every LLM call)
+
+```
+Context → CompressForLLM (30-60% reduction) → Verbosity Steering → Effort Routing → LLM → Terse Output
+```
+
+After indexing, data is immediately searchable via the 4-signal hybrid engine (semantic, keyword, entity, graph). Users access it through Search, Context, Reflect, MCP tools, Python/JS SDKs, and cross-agent shared context.
 
 ## Quick Start
 
 ```bash
+# Zero-config agent setup (recommended)
+synapse wrap claude    # or: cursor, kiro, codex, vscode
+# That's it — your agent now has 11 MCP tools for search, capture, reflect, and more.
+
 # Docker Compose (includes all dependencies)
 docker compose -f infra/docker/docker-compose.yml up --build
 
@@ -105,7 +120,28 @@ const results = await client.search('Redis caching strategy');
 
 ## Admin Panel
 
-The Flutter web UI provides: Dashboard, Users & Roles, System Health, Activity Metrics, Configuration (LLM), Memory Browser, Knowledge Search, Graph Explorer, API Keys, Operations (queues/audit/backup), and an Onboarding Wizard.
+The Flutter web UI provides: Dashboard, Users & Roles, Teams, System Health, Activity Metrics, Configuration (LLM), Memory Browser, Knowledge Search, Graph Explorer, API Keys, Operations (queues/audit/backup), and an Onboarding Wizard.
+
+## Cost Optimization
+
+Synapse reduces LLM token costs automatically:
+
+| Optimization | Where Applied | Savings |
+|-------------|---------------|---------|
+| Context compression | Compaction, Reflect | 30–60% input tokens |
+| Verbosity steering | All internal LLM calls | 30–40% output tokens |
+| Effort routing | Routine vs complex tasks | Right-sized max_tokens |
+| Cross-agent dedup | Shared context store | Avoids redundant processing |
+
+## Knowledge Quality (improves over time)
+
+| Mechanism | Effect |
+|-----------|--------|
+| Contradiction detection | Auto-supersedes conflicting facts |
+| Confidence calibration | Unused decays, accessed strengthens |
+| Feedback → ranking | Upvotes/downvotes tune signal weights |
+| Temporal decay | 30-day half-life keeps knowledge fresh |
+| Session learning | Failure patterns mined for recommendations |
 
 ## Key Design Decisions
 
@@ -128,4 +164,4 @@ The Flutter web UI provides: Dashboard, Users & Roles, System Health, Activity M
 
 ## Version
 
-**v1.0.0** — See [CHANGELOG.md](CHANGELOG.md) for full history.
+**v1.1.0** — See [CHANGELOG.md](CHANGELOG.md) for full history.

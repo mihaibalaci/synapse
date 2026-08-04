@@ -19,6 +19,9 @@ flowchart LR
         ADMIN[Admin Routes]
         METRICS[Prometheus metrics]
         WEBHOOKS[Webhook Emitter]
+        SHARED[Shared Context<br/>Cross-agent dedup]
+        COMPRESS[Context Compression<br/>30-60% token savings]
+        COST[Token Cost Tracker]
     end
 
     subgraph Storage["Storage Layer"]
@@ -61,7 +64,8 @@ flowchart LR
     SEARCH --> PG
     SEARCH --> REDIS
     REFLECT --> SEARCH
-    REFLECT --> LLM
+    REFLECT --> COMPRESS
+    COMPRESS --> LLM
     FACTS --> PG
     ADMIN --> PG
     WEBHOOKS -.->|async| EXT_HOOK[External Systems]
@@ -75,7 +79,7 @@ flowchart LR
     GRAPH --> PG
     CONTRA --> PG
     INDEX --> PG
-    COMPACT --> LLM
+    COMPACT --> COMPRESS
     COMPACT --> PG
     CONF_CAL --> PG
     EXTRACT -.-> WEBHOOKS
