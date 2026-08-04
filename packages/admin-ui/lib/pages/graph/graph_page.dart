@@ -21,6 +21,7 @@ class _GraphPageState extends State<GraphPage>
   final List<_PhysicsNode> _nodes = [];
   final _random = Random();
   Size _canvasSize = Size.zero;
+  Map<String, dynamic>? _nodeDetail;
 
   @override
   void initState() {
@@ -38,8 +39,8 @@ class _GraphPageState extends State<GraphPage>
   void _simulatePhysics() {
     final cx = _canvasSize.width / 2;
     final cy = _canvasSize.height / 2;
-    const damping = 0.92;
-    const repulsion = 800.0;
+    const damping = 0.97;
+    const repulsion = 400.0;
 
     for (final node in _nodes) {
       // Attract toward ideal radius (closer = higher weight)
@@ -47,14 +48,14 @@ class _GraphPageState extends State<GraphPage>
       final dx = node.x - cx;
       final dy = node.y - cy;
       final dist = sqrt(dx * dx + dy * dy).clamp(1.0, 1000.0);
-      final attraction = (dist - idealDist) * 0.005;
+      final attraction = (dist - idealDist) * 0.001;
       node.vx -= (dx / dist) * attraction;
       node.vy -= (dy / dist) * attraction;
 
-      // Gentle circular drift for organic motion
+      // Very gentle circular drift for subtle organic motion
       final angle = atan2(dy, dx);
-      node.vx += cos(angle + pi / 2) * 0.08;
-      node.vy += sin(angle + pi / 2) * 0.08;
+      node.vx += cos(angle + pi / 2) * 0.015;
+      node.vy += sin(angle + pi / 2) * 0.015;
 
       // Repel from other nodes
       for (final other in _nodes) {
@@ -64,12 +65,12 @@ class _GraphPageState extends State<GraphPage>
         final odist = sqrt(odx * odx + ody * ody).clamp(1.0, 500.0);
         if (odist < 80) {
           final force = repulsion / (odist * odist);
-          node.vx += (odx / odist) * force;
-          node.vy += (ody / odist) * force;
+          node.vx += (odx / odist) * force * 0.3;
+          node.vy += (ody / odist) * force * 0.3;
         }
       }
 
-      // Apply damping
+      // Apply damping (high = slow movement)
       node.vx *= damping;
       node.vy *= damping;
 
@@ -165,7 +166,41 @@ class _GraphPageState extends State<GraphPage>
       _edges = [];
       _nodes.clear();
       _searchController.clear();
+      _nodeDetail = null;
     });
+  }
+
+  Future<void> _showNodeDetail(String name) async {
+    try {
+      final api = context.read<ApiService>();
+      final facts = await api.get(
+        '/api/v1/facts?entities=${Uri.encodeComponent(name)}&limit=5',
+      );
+      final graph = await api.get(
+        '/api/v1/admin/graph/entity/${Uri.encodeComponent(name)}',
+      );
+      if (mounted) {
+        setState(() {
+          _nodeDetail = {
+            'entity': name,
+            'facts': facts['facts'] as List? ?? [],
+            'factCount': facts['total'] ?? 0,
+            'connections': (graph['edges'] as List?)?.length ?? 0,
+          };
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _nodeDetail = {
+            'entity': name,
+            'facts': [],
+            'factCount': 0,
+            'connections': 0,
+          };
+        });
+      }
+    }
   }
 
   @override
@@ -341,7 +376,8 @@ class _GraphPageState extends State<GraphPage>
             left: node.x - size / 2,
             top: node.y - 16,
             child: GestureDetector(
-              onTap: () => _selectEntity(node.name),
+              onTap: () => _showNodeDetail(node.name),
+              onDoubleTap: () => _selectEntity(node.name),
               child: MouseRegion(
                 cursor: SystemMouseCursors.click,
                 child: Container(
@@ -392,19 +428,139 @@ class _GraphPageState extends State<GraphPage>
         }),
         // Bottom hint
         Positioned(
-          bottom: 8,
+          bottom: _nodeDetail != null ? 180 : 8,
           left: 0,
           right: 0,
           child: Center(
             child: Text(
-              '${_edges.length} connections • Closer = more relevant • Click to explore',
+              '${_edges.length} connections • Closer = more relevant • Click for details • Double-click to explore',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
           ),
         ),
+        // Detail panel
+        if (_nodeDetail != null)
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: _buildDetailPanel(theme),
+          ),
       ],
+    );
+  }
+
+  Widget _buildDetailPanel(ThemeData theme) {
+    final detail = _nodeDetail!;
+    final entity = detail['entity'] as String;
+    final facts = detail['facts'] as List;
+    final factCount = detail['factCount'] as int;
+    final connections = detail['connections'] as int;
+
+    return Container(
+      height: 170,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHigh,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 12,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Row(
+              children: [
+                Icon(Icons.hub, size: 18, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  entity,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '$factCount facts • $connections links',
+                  style: theme.textTheme.bodySmall,
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed: () => _selectEntity(entity),
+                  icon: const Icon(Icons.explore, size: 16),
+                  label: const Text('Explore'),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 16),
+                  onPressed: () => setState(() => _nodeDetail = null),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: facts.isEmpty
+                ? Center(
+                    child: Text(
+                      'No facts recorded for "$entity"',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 4,
+                    ),
+                    itemCount: facts.length,
+                    itemBuilder: (_, i) {
+                      final fact = facts[i] as Map<String, dynamic>;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primaryContainer
+                                    .withValues(alpha: 0.5),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                fact['type'] ?? '',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                fact['content'] ?? '',
+                                style: theme.textTheme.bodySmall,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
