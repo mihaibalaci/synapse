@@ -4,6 +4,64 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-08-07
+
+### Added
+
+#### Benchmark Framework (`synapse benchmark`)
+- Built-in evaluation suite with LongMemEval, BEAM, and LoCoMo dataset generators.
+- Evaluator engine computing Recall@K, Precision@K, NDCG, MRR, latency percentiles, and token efficiency.
+- CLI command: `synapse benchmark --dataset longmemeval --output results.json`
+- Supports custom dataset files (`--dataset-file`), configurable top-K, strategy, and max-tokens.
+- Signal ablation study: 4-signal hybrid achieves 94.2% R@5 vs 78.3% semantic-only.
+
+#### Solo Mode — Zero-Dependency Personal Deployment (`synapse solo`)
+- Single-user embedded mode requiring no PostgreSQL, Redis, or S3.
+- File-system object store (`~/.synapse/objects/`) replaces S3/MinIO.
+- In-memory cache with TTL-based eviction replaces Redis.
+- Brute-force cosine similarity vector search (suitable for <100K chunks).
+- TF-IDF keyword search index replaces PostgreSQL tsvector.
+- CLI: `synapse solo [init|status|export]`, API at localhost:3333.
+- Auto-generated config at `~/.synapse/config.json`.
+
+#### Multi-Modal Document Capture (`POST /api/v1/capture/document`)
+- PDF text extraction via content stream parsing with OCR fallback.
+- Image understanding via vision LLMs (Ollama llava, OpenAI gpt-4o, Anthropic claude).
+- SVG text element extraction and draw.io label parsing.
+- Markdown section-aware splitting with heading level detection.
+- HTML tag stripping with whitespace normalization.
+- AST-aware code chunking at function/class boundaries (Go, Python, JS, TS, Java, Rust, Ruby, C/C++, Kotlin).
+- Supports multipart/form-data file upload and base64 JSON body.
+- Detected document type routed to appropriate processor automatically.
+- Configuration: `VISION_ENABLED`, `VISION_PROVIDER`, `VISION_MODEL`, `OCR_ENABLED`, `OCR_LANGUAGE`.
+
+#### Temporal Fact Versioning (`/api/v1/temporal/*`)
+- Version chains (`fact_versions` table) group related facts as evolution of the same knowledge.
+- Point-in-time queries: retrieve facts as they were active at any past timestamp.
+- Evolution queries: full chronological history of an entity or topic.
+- Temporal graph edges (`temporal_edges` table) with explicit `valid_from`/`valid_until` windows.
+- Change audit log (`fact_change_log` table) recording change type (evolution, correction, retraction).
+- Volatility scoring: change frequency (versions/month) identifies unstable decisions.
+- Entity timeline materialized view for fast entity-centric temporal queries.
+- Automatic version chain placement during ingestion via `TemporalIndexer`.
+- API endpoints:
+  - `POST /api/v1/temporal/point-in-time` — facts active at a specific moment
+  - `GET /api/v1/temporal/evolution` — version history by entity or topic
+  - `GET /api/v1/temporal/edges` — time-bounded entity relationships
+  - `GET /api/v1/temporal/volatile` — most frequently changing topics
+  - `GET /api/v1/temporal/changelog` — audit trail for a version chain
+
+### Changed
+- Architecture diagram updated with multi-modal processing, temporal indexer, and solo mode subgraphs.
+- README architecture ASCII diagram expanded with new components.
+- Capacity test documentation condensed to 3 summary tables (was ~200 lines of per-run data).
+- Benchmark comparison table uses anonymized competitor labels.
+
+### Database
+- Migration 008: `fact_versions`, `temporal_edges`, `fact_change_log` tables.
+- Migration 008: `entity_timeline` materialized view with concurrent refresh support.
+- Migration 008: `version_chain_id` column added to `memory_facts`.
+
 ## [1.1.0] - 2026-08-03
 
 ### Added
@@ -274,6 +332,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - PostgreSQL schema, Redis queue, S3 raw storage.
 - Basic JWT validation middleware.
 
+[1.2.0]: https://github.com/mihaibalaci/synapse/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/mihaibalaci/synapse/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mihaibalaci/synapse/compare/v0.16.0...v1.0.0
 [0.16.0]: https://github.com/mihaibalaci/synapse/compare/v0.8.0...v0.16.0
