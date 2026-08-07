@@ -56,6 +56,14 @@ type Config struct {
 	RateLimitWindow int // seconds
 	// Ingestion
 	WorkerConcurrency int
+
+	// Multi-modal
+	VisionEnabled  bool
+	VisionProvider string
+	VisionModel    string
+	VisionURL      string
+	OCREnabled     bool
+	OCRLanguage    string
 }
 
 func Load() *Config {
@@ -97,6 +105,13 @@ func Load() *Config {
 		RateLimitWindow: envInt("RATE_LIMIT_WINDOW_MS", 60000) / 1000,
 
 		WorkerConcurrency: envInt("WORKER_CONCURRENCY", 4),
+
+		VisionEnabled:  envBool("VISION_ENABLED", false),
+		VisionProvider: env("VISION_PROVIDER", "ollama"),
+		VisionModel:    env("VISION_MODEL", "llava"),
+		VisionURL:      env("VISION_URL", "http://localhost:11434"),
+		OCREnabled:     envBool("OCR_ENABLED", true),
+		OCRLanguage:    env("OCR_LANGUAGE", "eng"),
 	}
 }
 

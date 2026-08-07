@@ -244,3 +244,200 @@ Per-role tiers: admin 300/min, team_lead 200/min, developer 100/min, viewer 50/m
 ```
 
 Common: `400` validation, `401` invalid token, `403` missing role, `409` conflict, `429` rate limit, `500` internal, `503` dependency failure.
+
+
+---
+
+## Temporal Versioning
+
+Temporal versioning tracks how facts evolve over time, enabling point-in-time queries, evolution tracking, and change frequency analysis.
+
+### Point-in-Time Query
+
+`POST /api/v1/temporal/point-in-time`
+
+Returns facts that were active at a specific moment in time. Useful for answering "what did we believe about X on date Y?"
+
+```json
+{
+  "asOf": "2026-03-15T10:00:00Z",
+  "entities": ["PostgreSQL", "caching"],
+  "types": ["decision"],
+  "limit": 20
+}
+```
+
+Response:
+```json
+{
+  "asOf": "2026-03-15T10:00:00Z",
+  "results": [
+    {
+      "factId": "uuid",
+      "content": "Decision: We will use PostgreSQL with JSONB for the event store.",
+      "factType": "decision",
+      "confidence": 0.85,
+      "observedAt": "2026-02-01T09:00:00Z",
+      "validFrom": "2026-02-01T09:00:00Z",
+      "validUntil": null,
+      "canonicalTopic": "PostgreSQL:event-store",
+      "versionCount": 2,
+      "changeFrequency": 0.5,
+      "temporalStatus": "active"
+    }
+  ],
+  "count": 1
+}
+```
+
+### Evolution Query
+
+`GET /api/v1/temporal/evolution?entity=PostgreSQL&limit=50`
+`GET /api/v1/temporal/evolution?topic=PostgreSQL:caching&limit=50`
+
+Returns the full version history of an entity or topic, ordered chronologically. Shows how knowledge evolved.
+
+Response:
+```json
+{
+  "entity": "PostgreSQL",
+  "results": [
+    {
+      "factId": "uuid-v1",
+      "content": "Decision: Use PostgreSQL for all persistent storage.",
+      "factType": "decision",
+      "observedAt": "2026-01-15T10:00:00Z",
+      "temporalStatus": "superseded"
+    },
+    {
+      "factId": "uuid-v2",
+      "content": "Decision: Use PostgreSQL for OLTP, but add ClickHouse for analytics workloads.",
+      "factType": "decision",
+      "observedAt": "2026-04-20T14:30:00Z",
+      "temporalStatus": "active"
+    }
+  ],
+  "count": 2
+}
+```
+
+### Temporal Edges
+
+`GET /api/v1/temporal/edges?entity=Redis&asOf=2026-06-01T00:00:00Z`
+
+Returns time-bounded relationships between entities as of a specific date.
+
+Response:
+```json
+{
+  "entity": "Redis",
+  "asOf": "2026-06-01T00:00:00Z",
+  "edges": [
+    {
+      "sourceEntity": "Redis",
+      "targetEntity": "session-management",
+      "relation": "decided-for",
+      "validFrom": "2026-03-01T10:00:00Z",
+      "validUntil": null,
+      "weight": 2.1,
+      "confidence": 0.85
+    }
+  ],
+  "count": 1
+}
+```
+
+### Volatile Topics
+
+`GET /api/v1/temporal/volatile?limit=20`
+
+Returns topics that change most frequently, ordered by change frequency (versions per month). Useful for identifying unstable decisions that may need review.
+
+Response:
+```json
+{
+  "topics": [
+    {
+      "canonicalTopic": "CI-CD:pipeline",
+      "entities": ["GitHub-Actions", "Buildkite", "CI-CD"],
+      "versionCount": 4,
+      "changeFrequency": 1.33,
+      "firstObservedAt": "2026-01-01T10:00:00Z",
+      "lastUpdatedAt": "2026-06-15T09:00:00Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+### Change Log
+
+`GET /api/v1/temporal/changelog?chainId=<uuid>&limit=50`
+
+Returns the audit trail for a specific version chain, showing what changed and why.
+
+Response:
+```json
+{
+  "chainId": "uuid",
+  "changes": [
+    {
+      "changeType": "evolution",
+      "changeReason": "",
+      "detectedBy": "auto",
+      "changedAt": "2026-04-20T14:30:00Z",
+      "previousFactId": "uuid-v1",
+      "newFactId": "uuid-v2"
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
+## Multi-Modal Document Capture
+
+### Upload Document
+
+`POST /api/v1/capture/document`
+
+Accepts multipart/form-data or JSON with base64-encoded content.
+
+**Multipart form:**
+```
+POST /api/v1/capture/document
+Content-Type: multipart/form-data
+
+file: <binary file data>
+repository: my-service (optional)
+source: manual-upload (optional)
+```
+
+**JSON:**
+```json
+{
+  "filename": "architecture.pdf",
+  "content": "<base64-encoded file data>",
+  "contentType": "application/pdf",
+  "repository": "my-service",
+  "source": "manual-upload"
+}
+```
+
+Supported formats: PDF, PNG, JPEG, WEBP, SVG, draw.io, Markdown, HTML, plain text, code files (Go, Python, JS, TS, Java, Rust, Ruby, C/C++, Kotlin).
+
+Response:
+```json
+{
+  "documentId": "uuid",
+  "sessionId": "uuid",
+  "filename": "architecture.pdf",
+  "documentType": "pdf",
+  "extractedText": "First 500 chars of extracted text...",
+  "sections": 5,
+  "pages": 12,
+  "tokens": 3400,
+  "status": "processing"
+}
+```

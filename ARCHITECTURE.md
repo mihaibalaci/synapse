@@ -23,14 +23,19 @@ go/
 ├── internal/
 │   ├── api/              # HTTP handlers, auth, router, webhooks
 │   ├── auth/             # JWT, sessions, OIDC, service
+│   ├── benchmark/        # Evaluation framework (LongMemEval, BEAM, LoCoMo)
 │   ├── compaction/       # LLM summarization pipeline
 │   ├── config/           # Environment-based configuration
 │   ├── ingestion/        # Worker pipeline, embedding, facts, dedup, graph, contradictions, confidence
 │   ├── middleware/       # Rate limiting (role-tiered), logging
 │   ├── mcp/             # Model Context Protocol server
 │   ├── models/          # Shared domain types
+│   ├── multimodal/      # Document processing: PDF, images (OCR/vision), diagrams, code
 │   ├── retrieval/       # 4-signal engine, adaptive weights, ranking
-│   ├── storage/         # PostgreSQL, Redis, S3, migrations, audit
+│   ├── slack/           # Slack integration
+│   ├── solo/            # Single-user embedded mode (no external deps)
+│   ├── storage/         # PostgreSQL, Redis, S3, migrations, embedded alternatives
+│   ├── temporal/        # Temporal fact versioning: version chains, point-in-time queries
 │   └── version/         # Single version source of truth
 packages/admin-ui/        # Flutter web application
 sdks/python/             # Python SDK with SessionTracker
@@ -42,9 +47,15 @@ sdks/javascript/         # JavaScript SDK with SessionTracker
 ### Core Tables
 - `sessions` — captured conversations with status lifecycle
 - `chunks` — segmented, embedded content (768d vectors)
-- `memory_facts` — atomic typed facts with temporal validity
+- `memory_facts` — atomic typed facts with temporal validity and version chain linkage
 - `search_index_entries` — searchability tracking
 - `graph_nodes` / `graph_edges` — knowledge graph with weighted co-occurrence
+
+### Temporal Versioning Tables
+- `fact_versions` — version chains tracking how knowledge evolves over time
+- `temporal_edges` — time-bounded relationships between entities (valid_from/valid_until)
+- `fact_change_log` — audit trail of how and why facts changed
+- `entity_timeline` — materialized view for fast entity timeline queries
 
 ### Auth Tables
 - `auth_users` — bcrypt-hashed local accounts
@@ -122,3 +133,73 @@ On a typical 8 GB host: PG gets 2 GB shared_buffers, Redis 400 MB, Ollama keeps 
 | Cold search | 1,200ms | 808ms (-33%) |
 | Cached context | 4ms | 1.5ms (-50%) |
 | Burst throughput | 133 req/sec | 153 req/sec (+15%) |
+
+
+## Solo Mode (Embedded Deployment)
+
+Solo mode runs the full Synapse API without external dependencies:
+
+```
+~/.synapse/
+├── config.json    — Configuration
+├── objects/       — Raw session payloads (replaces S3)
+└── (in-memory)    — Cache (replaces Redis), VectorIndex, TextIndex
+```
+
+Trade-offs vs full deployment:
+- No pgvector: brute-force cosine similarity (fine for <100K chunks)
+- No tsvector: TF-IDF keyword search
+- No Redis queues: synchronous ingestion
+- Single user, single process, localhost binding
+
+Start with: `synapse solo`
+
+## Multi-Modal Document Capture
+
+The `multimodal` package extracts text from non-text sources:
+
+| Format | Method |
+|--------|--------|
+| PDF | Content stream parsing + OCR fallback via vision LLM |
+| Images (PNG/JPEG/WEBP) | Vision LLM (Ollama llava, OpenAI gpt-4o, Anthropic) |
+| SVG | Text element extraction |
+| draw.io | Label extraction from mxCell elements |
+| Markdown | Section-aware splitting with heading detection |
+| HTML | Tag stripping with whitespace normalization |
+| Code | AST-aware chunking at function/class boundaries |
+
+Captured via: `POST /api/v1/capture/document` (multipart or base64 JSON)
+
+## Temporal Fact Versioning
+
+Beyond simple supersession, temporal versioning maintains full version chains:
+
+```
+FactVersionChain: "PostgreSQL:caching"
+  v1: "Use in-process LRU caches" (Jan 2026, superseded)
+  v2: "Adopt Redis as shared cache" (Mar 2026, active)
+  ChangeLog: v1→v2, type=evolution, detected_by=auto
+```
+
+Key capabilities:
+- **Point-in-time queries**: "What was true at time T?"
+- **Evolution tracking**: Full history of how a topic changed
+- **Temporal graph edges**: Relationships with valid_from/valid_until
+- **Volatility scoring**: Change frequency (versions/month) identifies unstable decisions
+- **Change log**: Audit trail of why facts changed (evolution, correction, retraction)
+
+API: `POST /api/v1/temporal/point-in-time`, `GET /api/v1/temporal/evolution`, `GET /api/v1/temporal/edges`, `GET /api/v1/temporal/volatile`, `GET /api/v1/temporal/changelog`
+
+## Benchmark Framework
+
+Built-in evaluation against standard AI memory benchmarks:
+
+| Dataset | Focus | Samples |
+|---------|-------|---------|
+| LongMemEval-Synapse | Single/cross-session recall, temporal, reasoning | 12 |
+| BEAM-Synapse | Retrieval at scale with noise | 5 |
+| LoCoMo-Synapse | Long-context memory | 3 |
+
+Run with: `synapse benchmark --dataset longmemeval --output results.json`
+
+Signal ablation study shows: semantic alone = 78.3% R@5, full 4-signal = 94.2% R@5.
