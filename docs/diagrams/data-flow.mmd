@@ -6,6 +6,7 @@ flowchart LR
         CLI[CLI]
         GIT[Git Webhooks]
         SLACK[Slack Bot]
+        DOCS[Document Upload<br/>PDF/Image/Diagram]
     end
 
     subgraph API["API Server (Go)"]
@@ -13,7 +14,9 @@ flowchart LR
         RATE[Rate Limiter<br/>Per-role tiers]
         CAP[Capture Handler]
         GIT_CAP[Git Capture Handler]
+        DOC_CAP[Document Capture<br/>Multi-modal Processing]
         SEARCH[Search Engine<br/>4-signal hybrid]
+        TEMPORAL[Temporal Queries<br/>Point-in-time/Evolution]
         REFLECT[Reflect/Learning Loop]
         FACTS[Facts API]
         ADMIN[Admin Routes]
@@ -25,7 +28,7 @@ flowchart LR
     end
 
     subgraph Storage["Storage Layer"]
-        PG[(PostgreSQL 16<br/>pgvector + FTS)]
+        PG[(PostgreSQL 16<br/>pgvector + FTS<br/>Temporal Versioning)]
         REDIS[(Redis 7<br/>Queues + Cache)]
         S3[(S3/MinIO<br/>Raw Objects)]
     end
@@ -38,13 +41,30 @@ flowchart LR
         DEDUP[Cross-session Dedup]
         GRAPH[Graph Population]
         CONTRA[Contradiction Detection]
+        TEMP_IDX[Temporal Indexer<br/>Version Chains]
         INDEX[Search Index]
         COMPACT[Auto-Compaction<br/>LLM Summarization]
         CONF_CAL[Confidence Calibration]
     end
 
+    subgraph Multimodal["Multi-Modal Processing"]
+        PDF[PDF Extraction]
+        OCR[OCR/Vision LLM]
+        DIAGRAM[Diagram Parsing<br/>SVG/draw.io]
+        CODE[AST-aware Chunking]
+    end
+
     subgraph Intelligence["Intelligence"]
         LLM[LLM Provider<br/>Ollama/OpenAI/Anthropic]
+        VISION[Vision Model<br/>llava/gpt-4o/claude]
+    end
+
+    subgraph Solo["Solo Mode (optional)"]
+        SOLO_API[Solo API :3333]
+        FILE_STORE[FileStore<br/>~/.synapse/objects/]
+        MEM_CACHE[In-Memory Cache]
+        VEC_IDX[Vector Index<br/>Brute-force cosine]
+        TXT_IDX[Text Index<br/>TF-IDF]
     end
 
     %% Capture flows
@@ -54,6 +74,17 @@ flowchart LR
     CLI --> CAP
     GIT --> GIT_CAP
     SLACK --> CAP
+    DOCS --> DOC_CAP
+
+    %% Document processing
+    DOC_CAP --> PDF
+    DOC_CAP --> OCR
+    DOC_CAP --> DIAGRAM
+    DOC_CAP --> CODE
+    OCR --> VISION
+    PDF --> CAP
+    DIAGRAM --> CAP
+    CODE --> CAP
 
     %% API internals
     CAP --> S3
@@ -63,6 +94,7 @@ flowchart LR
     AUTH --> PG
     SEARCH --> PG
     SEARCH --> REDIS
+    TEMPORAL --> PG
     REFLECT --> SEARCH
     REFLECT --> COMPRESS
     COMPRESS --> LLM
@@ -72,15 +104,22 @@ flowchart LR
 
     %% Worker pipeline
     REDIS -->|BRPOP| INGEST
-    INGEST --> SEG --> EMBED --> EXTRACT --> DEDUP --> GRAPH --> CONTRA --> INDEX
+    INGEST --> SEG --> EMBED --> EXTRACT --> DEDUP --> GRAPH --> CONTRA --> TEMP_IDX --> INDEX
     EMBED --> PG
     EXTRACT --> PG
     DEDUP --> PG
     GRAPH --> PG
     CONTRA --> PG
+    TEMP_IDX --> PG
     INDEX --> PG
     COMPACT --> COMPRESS
     COMPACT --> PG
     CONF_CAL --> PG
     EXTRACT -.-> WEBHOOKS
     CONTRA -.-> WEBHOOKS
+
+    %% Solo mode (self-contained)
+    SOLO_API --> FILE_STORE
+    SOLO_API --> MEM_CACHE
+    SOLO_API --> VEC_IDX
+    SOLO_API --> TXT_IDX

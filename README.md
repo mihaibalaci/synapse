@@ -28,26 +28,31 @@ Single Go binary + Flutter admin UI + optional Rust compute kernels.
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         CAPTURE LAYER                                │
-│  MCP │ Python SDK │ JS SDK │ CLI │ Git │ Slack │ REST API           │
+│  MCP │ Python SDK │ JS SDK │ CLI │ Git │ Slack │ Documents (PDF/IMG)│
 └──────┬──────────────────────────────────────────────────────────────┘
        │
 ┌──────▼──────────────────────────────────────────────────────────────┐
 │                         API SERVER (Go)                              │
 │  Auth (Login/OIDC/API Keys) │ Rate Limiting │ Webhooks              │
-│  Search (4-signal) │ Reflect │ Admin │ Prometheus                   │
+│  Search (4-signal) │ Temporal Queries │ Reflect │ Admin │ Prometheus│
+│  Multi-Modal Processing (PDF/OCR/Vision/Diagrams/Code)              │
 └──────┬──────────────────────────────────────────────────────────────┘
        │
 ┌──────▼──────────────────────────────────────────────────────────────┐
 │                         WORKER                                       │
-│  Segment → Embed → Facts → Dedup → Graph → Contradictions → Index  │
+│  Segment → Embed → Facts → Dedup → Graph → Contradictions →        │
+│  Temporal Versioning → Index                                         │
 │  Auto-compaction │ Confidence calibration │ Reaper recovery          │
 └──────┬──────────────────────────────────────────────────────────────┘
        │
 ┌──────▼──────────────────────────────────────────────────────────────┐
 │  PostgreSQL 16       │  Redis 7          │  S3/MinIO                │
 │  pgvector + FTS      │  Queues + Cache   │  Raw Objects             │
-│  Knowledge Graph     │  Rate State       │  Session Payloads        │
+│  Temporal Versioning │  Rate State       │  Session Payloads        │
+│  Knowledge Graph     │                   │  Documents               │
 └─────────────────────────────────────────────────────────────────────┘
+
+Solo Mode (alternative): Single binary, ~/.synapse/, no external deps
 ```
 
 ![Data Flow Diagram](docs/assets/data-flow.svg)
