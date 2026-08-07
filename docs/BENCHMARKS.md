@@ -147,11 +147,20 @@ All context memories are ingested through the standard Synapse pipeline: segment
 Queries use the full 4-signal hybrid retrieval with default adaptive weights (semantic: 0.25, keyword: 0.10, entity: 0.08, graph: 0.07, temporal: 0.15, usage: 0.10, quality: 0.08, repo: 0.12).
 
 ### Metrics
-- **Recall@K**: Fraction of relevant items found in the top-K results
-- **Precision@K**: Fraction of top-K results that are relevant
-- **NDCG**: Normalized Discounted Cumulative Gain (position-sensitive)
-- **MRR**: Mean Reciprocal Rank of the first relevant result
-- **Token Efficiency**: Ratio of relevant tokens to total tokens returned
+
+- **Recall@K**: The fraction of relevant items that appear in the top-K results. If a query has 3 ground-truth memories and 2 are found in the top-5, Recall@5 = 2/3 = 66.7%. Measures retrieval *coverage* — did the system find everything it should have?
+
+- **Precision@K**: The fraction of top-K results that are actually relevant. If 3 out of 5 returned results are relevant, Precision@5 = 3/5 = 60%. Measures retrieval *accuracy* — how much noise is in the results?
+
+- **NDCG** (Normalized Discounted Cumulative Gain): A position-sensitive metric that rewards placing relevant results higher in the ranked list. A relevant item at position 1 contributes more to the score than one at position 5. NDCG = 1.0 means all relevant items are at the top in perfect order. Range: 0 to 1.
+
+- **MRR** (Mean Reciprocal Rank): The average of 1/rank for the first relevant result across all queries. If the first relevant result is at position 1, the reciprocal rank is 1.0; at position 3, it's 0.33. Measures how quickly the system surfaces *something* useful. Range: 0 to 1.
+
+- **Avg Latency**: Mean time in milliseconds from query submission to results returned, measuring end-to-end retrieval speed including embedding, all 4 signals, fusion, and ranking.
+
+- **P95/P99 Latency**: The latency at the 95th/99th percentile — 95% (or 99%) of queries complete within this time. Captures worst-case tail performance rather than the average.
+
+- **Token Efficiency**: The ratio of relevant tokens to total tokens returned. If the system returns 1000 tokens and 680 of those are from relevant results, efficiency is 68%. Measures how much of the retrieved context is actually useful for downstream LLM consumption.
 
 ### Hardware
 Benchmarks run on a single-node deployment (PostgreSQL 16, Redis 7, local Ollama embedding). Latency numbers reflect local-network conditions without CDN or caching warmup.
