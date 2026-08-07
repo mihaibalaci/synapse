@@ -81,6 +81,7 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 		// Capture endpoints
 		r.Post("/api/v1/capture/passive", CapturePassiveHandler(app))
 		r.Post("/api/v1/capture/active", CaptureActiveHandler(app))
+		r.Post("/api/v1/capture/document", CaptureDocumentHandler(app))
 		r.Post("/api/v1/capture/event", handleCaptureEvent)
 		r.Post("/api/v1/capture/events", handleCaptureEvents)
 		r.Post("/api/v1/capture/git", handleGitCapture)
@@ -94,6 +95,13 @@ func NewRouter(cfg *config.Config, app *App) http.Handler {
 		r.Get("/api/v1/facts", handleGetFacts)
 		r.Post("/api/v1/facts", handleCreateFact)
 		r.Get("/api/v1/facts/{entity}/history", handleGetFactHistory)
+
+		// Temporal versioning endpoints
+		r.Post("/api/v1/temporal/point-in-time", HandleTemporalPointInTime(app))
+		r.Get("/api/v1/temporal/evolution", HandleTemporalEvolution(app))
+		r.Get("/api/v1/temporal/edges", HandleTemporalEdges(app))
+		r.Get("/api/v1/temporal/volatile", HandleTemporalVolatile(app))
+		r.Get("/api/v1/temporal/changelog", HandleTemporalChangeLog(app))
 
 		// Reflect endpoint (learning loop)
 		r.Post("/api/v1/reflect", handleReflectReal)

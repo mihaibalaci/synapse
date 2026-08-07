@@ -24,12 +24,14 @@ import (
 
 	"github.com/mihaibalaci/synapse/internal/api"
 	"github.com/mihaibalaci/synapse/internal/auth"
+	"github.com/mihaibalaci/synapse/internal/benchmark"
 	"github.com/mihaibalaci/synapse/internal/cli"
 	"github.com/mihaibalaci/synapse/internal/compaction"
 	"github.com/mihaibalaci/synapse/internal/config"
 	"github.com/mihaibalaci/synapse/internal/ingestion"
 	"github.com/mihaibalaci/synapse/internal/mcp"
 	"github.com/mihaibalaci/synapse/internal/slack"
+	"github.com/mihaibalaci/synapse/internal/solo"
 	"github.com/mihaibalaci/synapse/internal/storage"
 )
 
@@ -71,6 +73,10 @@ func main() {
 		runDetectContradictions(cfg)
 	case "s3-gc":
 		runS3GC(cfg)
+	case "benchmark":
+		runBenchmark(cfg)
+	case "solo":
+		solo.Run(os.Args[2:])
 	case "search", "facts", "history", "reflect", "insight", "status":
 		cli.Run(os.Args[1:])
 	case "wrap":
@@ -78,7 +84,7 @@ func main() {
 	case "unwrap":
 		cli.UnwrapAgent(os.Args[2:])
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: synapse [serve|worker|migrate|auth-bootstrap|compact|detect-contradictions|mcp|slack|verify-storage|embed-backfill|search|facts|history|reflect|insight|status]\n", mode)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: synapse [serve|worker|migrate|auth-bootstrap|compact|detect-contradictions|mcp|slack|solo|verify-storage|embed-backfill|benchmark|search|facts|history|reflect|insight|status]\n", mode)
 		os.Exit(1)
 	}
 }
@@ -447,6 +453,55 @@ func runMCP(cfg *config.Config) {
 func runSlack() {
 	bot := slack.NewBot()
 	bot.Run()
+}
+
+func runBenchmark(cfg *config.Config) {
+	bcfg := benchmark.RunnerConfig{
+		DatabaseURL: cfg.DatabaseURL,
+		RedisURL:    cfg.RedisURL,
+		S3Endpoint:  cfg.S3Endpoint,
+		S3Bucket:    cfg.S3Bucket,
+		TopK:        5,
+		Strategy:    "hybrid",
+	}
+
+	// Parse benchmark-specific flags from os.Args
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--dataset":
+			if i+1 < len(os.Args) {
+				bcfg.DatasetName = os.Args[i+1]
+				i++
+			}
+		case "--dataset-file":
+			if i+1 < len(os.Args) {
+				bcfg.DatasetFile = os.Args[i+1]
+				i++
+			}
+		case "--output":
+			if i+1 < len(os.Args) {
+				bcfg.OutputFile = os.Args[i+1]
+				i++
+			}
+		case "--top-k":
+			if i+1 < len(os.Args) {
+				fmt.Sscanf(os.Args[i+1], "%d", &bcfg.TopK)
+				i++
+			}
+		case "--strategy":
+			if i+1 < len(os.Args) {
+				bcfg.Strategy = os.Args[i+1]
+				i++
+			}
+		case "--max-tokens":
+			if i+1 < len(os.Args) {
+				fmt.Sscanf(os.Args[i+1], "%d", &bcfg.MaxTokens)
+				i++
+			}
+		}
+	}
+
+	benchmark.RunBenchmarkCLI(bcfg)
 }
 
 func parseLogLevel(level string) slog.Level {

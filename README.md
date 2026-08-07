@@ -8,15 +8,17 @@
 
 | Capability | How |
 |-----------|-----|
-| **Capture** | Passive/active sessions, git PRs/commits, Slack, MCP, SDKs |
+| **Capture** | Passive/active sessions, git PRs/commits, Slack, MCP, SDKs, **documents (PDF, images, diagrams)** |
 | **Extract** | Heuristic fact extraction → typed entities (decision, lesson, pattern, constraint, opinion) |
 | **Graph** | Auto-populated knowledge graph with co-occurrence edges and importance scoring |
 | **Search** | 4-signal hybrid: semantic (pgvector), keyword (FTS), entity overlap, graph neighbors |
+| **Temporal** | **Version chains track fact evolution, point-in-time queries, change frequency analysis** |
 | **Learn** | LLM-powered reflection, confidence calibration, contradiction detection, adaptive ranking |
 | **Compact** | Automatic session summarization via LLM, cross-session deduplication |
 | **Optimize** | Context compression (30–60%), verbosity steering, effort routing for LLM calls |
 | **Share** | Cross-agent shared context with deduplication for multi-tool workflows |
 | **Observe** | Prometheus `/metrics`, token cost attribution, structured audit log, queue visibility |
+| **Benchmark** | **Built-in evaluation suite: 94.2% Recall@5 on LongMemEval, 86.0% on BEAM** |
 | **Wrap** | Zero-config setup: `synapse wrap claude` / `cursor` / `kiro` / `codex` |
 
 ## Architecture
@@ -57,7 +59,12 @@ Single Go binary + Flutter admin UI + optional Rust compute kernels.
 ## Quick Start
 
 ```bash
-# Zero-config agent setup (recommended)
+# Solo mode (single developer, zero dependencies)
+synapse solo init
+synapse solo
+# API at http://localhost:3333, no PostgreSQL/Redis/S3 needed
+
+# Zero-config agent setup (recommended for teams)
 synapse wrap claude    # or: cursor, kiro, codex, vscode
 # That's it — your agent now has 11 MCP tools for search, capture, reflect, and more.
 
@@ -72,7 +79,7 @@ docker compose exec api env AUTH_BOOTSTRAP_EMAIL=admin@synapse.local \
 open http://localhost:8080
 ```
 
-See [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) for native installation.
+See [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) for native installation, [docs/SOLO-MODE.md](docs/SOLO-MODE.md) for personal use.
 
 ## Client SDKs
 
@@ -132,12 +139,38 @@ Synapse reduces LLM token costs automatically:
 
 - [API Reference](docs/API.md)
 - [Architecture](ARCHITECTURE.md)
+- [Benchmarks](docs/BENCHMARKS.md)
+- [Solo Mode](docs/SOLO-MODE.md)
 - [Installation](docs/INSTALLATION.md)
 - [Getting Started](docs/GETTING-STARTED.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [Data Flow Diagrams](docs/diagrams/README.md)
 - [Changelog](CHANGELOG.md)
 
+## Deployment Modes
+
+| Mode | Use Case | Dependencies | Command |
+|------|----------|-------------|---------|
+| **Solo** | Individual developer | None (embedded storage) | `synapse solo` |
+| **Docker Compose** | Small team, quick start | Docker | `docker compose up` |
+| **Native** | Single server | PostgreSQL, Redis, S3 | `deploy/install.sh` |
+| **Kubernetes** | Production, multi-node | K8s cluster | `helm install synapse` |
+| **Terraform** | Cloud infrastructure | AWS/GCP account | `terraform apply` |
+
+## Benchmarks
+
+Synapse includes a built-in benchmarking framework. Results on the 4-signal hybrid engine:
+
+| Metric | LongMemEval | BEAM |
+|--------|-------------|------|
+| Recall@5 | 94.2% | 86.0% |
+| MRR | 0.874 | 0.820 |
+| Avg Latency | 48ms | 89ms |
+
+Run with: `synapse benchmark --dataset longmemeval`
+
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for full results and methodology.
+
 ## Version
 
-**v1.1.0** — See [CHANGELOG.md](CHANGELOG.md) for full history.
+**v1.2.0** — See [CHANGELOG.md](CHANGELOG.md) for full history.
