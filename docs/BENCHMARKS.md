@@ -67,11 +67,11 @@ Based on published benchmarks from competing solutions (as of mid-2026):
 | System | LongMemEval R@5 | BEAM | Architecture | Self-hosted |
 |--------|-----------------|------|--------------|-------------|
 | **Synapse** | **94.2%** | **86.0%** | 4-signal hybrid + RRF fusion | Yes |
-| MemPalace 3.2 | 96.6% | N/A | Hierarchical filesystem + semantic | Yes |
-| Hindsight | N/A | 64.1% (at 10M tokens) | Hybrid PG (vector + BM25) | Yes |
-| Cognee | 92.5% (accuracy) | N/A | Knowledge graph + ECL pipeline | Yes |
-| Letta/MemGPT | 74.0% (LoCoMo) | N/A | Agent-managed file search | Yes |
-| Supermemory | 85.4% | N/A | Memory graph + hybrid search | Cloud only |
+| Competitor A | 96.6% | N/A | Hierarchical filesystem + semantic | Yes |
+| Competitor B | N/A | 64.1% (at 10M tokens) | Hybrid PG (vector + BM25) | Yes |
+| Competitor C | 92.5% (accuracy) | N/A | Knowledge graph + ECL pipeline | Yes |
+| Competitor D | 74.0% (LoCoMo) | N/A | Agent-managed file search | Yes |
+| Competitor E | 85.4% | N/A | Memory graph + hybrid search | Cloud only |
 
 ### Signal Contribution Analysis
 
