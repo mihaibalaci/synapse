@@ -1,0 +1,209 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" style="background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <!-- Title -->
+  <text x="600" y="40" text-anchor="middle" font-size="22" font-weight="bold" fill="#1a1a2e">Synapse — System Components</text>
+  <text x="600" y="62" text-anchor="middle" font-size="12" fill="#6b7280">v1.2.0 · The memory layer that learns</text>
+
+  <!-- Capture Layer -->
+  <rect x="30" y="90" width="1140" height="100" rx="12" fill="#e8f4fd" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="60" y="115" font-size="11" font-weight="bold" fill="#1e40af">CAPTURE LAYER</text>
+  
+  <rect x="50" y="125" width="100" height="50" rx="6" fill="white" stroke="#3b82f6" stroke-width="1"/>
+  <text x="100" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#1e40af">MCP Server</text>
+  <text x="100" y="163" text-anchor="middle" font-size="9" fill="#6b7280">11 tools</text>
+
+  <rect x="165" y="125" width="100" height="50" rx="6" fill="white" stroke="#3b82f6" stroke-width="1"/>
+  <text x="215" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#1e40af">IDE Agents</text>
+  <text x="215" y="163" text-anchor="middle" font-size="8" fill="#6b7280">Claude·Cursor·Kiro·Muse</text>
+
+  <rect x="280" y="125" width="100" height="50" rx="6" fill="white" stroke="#3b82f6" stroke-width="1"/>
+  <text x="330" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#1e40af">SDKs</text>
+  <text x="330" y="163" text-anchor="middle" font-size="9" fill="#6b7280">Python · JavaScript</text>
+
+  <rect x="395" y="125" width="100" height="50" rx="6" fill="white" stroke="#3b82f6" stroke-width="1"/>
+  <text x="445" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#1e40af">Git Capture</text>
+  <text x="445" y="163" text-anchor="middle" font-size="9" fill="#6b7280">PRs · Commits · Diffs</text>
+
+  <rect x="510" y="125" width="100" height="50" rx="6" fill="white" stroke="#3b82f6" stroke-width="1"/>
+  <text x="560" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#1e40af">Documents</text>
+  <text x="560" y="163" text-anchor="middle" font-size="8" fill="#6b7280">PDF·Image·SVG·Code</text>
+
+  <rect x="625" y="125" width="100" height="50" rx="6" fill="white" stroke="#3b82f6" stroke-width="1"/>
+  <text x="675" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#1e40af">REST API</text>
+  <text x="675" y="163" text-anchor="middle" font-size="9" fill="#6b7280">Capture endpoints</text>
+
+  <rect x="740" y="125" width="100" height="50" rx="6" fill="white" stroke="#3b82f6" stroke-width="1"/>
+  <text x="790" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#1e40af">Slack</text>
+  <text x="790" y="163" text-anchor="middle" font-size="9" fill="#6b7280">Thread forwarding</text>
+
+  <rect x="855" y="125" width="100" height="50" rx="6" fill="white" stroke="#3b82f6" stroke-width="1"/>
+  <text x="905" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#1e40af">CLI</text>
+  <text x="905" y="163" text-anchor="middle" font-size="9" fill="#6b7280">synapse wrap/search</text>
+
+  <rect x="970" y="125" width="100" height="50" rx="6" fill="white" stroke="#3b82f6" stroke-width="1"/>
+  <text x="1020" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#1e40af">Webhooks</text>
+  <text x="1020" y="163" text-anchor="middle" font-size="9" fill="#6b7280">Event streaming</text>
+
+  <!-- API Server -->
+  <rect x="30" y="210" width="750" height="180" rx="12" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.5"/>
+  <text x="60" y="235" font-size="11" font-weight="bold" fill="#166534">API SERVER (Go, port 3000)</text>
+
+  <rect x="50" y="248" width="130" height="44" rx="6" fill="white" stroke="#22c55e" stroke-width="1"/>
+  <text x="115" y="268" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">4-Signal Search</text>
+  <text x="115" y="282" text-anchor="middle" font-size="8" fill="#6b7280">Semantic·KW·Entity·Graph</text>
+
+  <rect x="195" y="248" width="130" height="44" rx="6" fill="white" stroke="#22c55e" stroke-width="1"/>
+  <text x="260" y="268" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">Temporal Queries</text>
+  <text x="260" y="282" text-anchor="middle" font-size="8" fill="#6b7280">Point-in-time·Evolution</text>
+
+  <rect x="340" y="248" width="130" height="44" rx="6" fill="white" stroke="#22c55e" stroke-width="1"/>
+  <text x="405" y="268" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">Auth &amp; RBAC</text>
+  <text x="405" y="282" text-anchor="middle" font-size="8" fill="#6b7280">JWT·OIDC·API Keys</text>
+
+  <rect x="485" y="248" width="130" height="44" rx="6" fill="white" stroke="#22c55e" stroke-width="1"/>
+  <text x="550" y="268" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">Reflect</text>
+  <text x="550" y="282" text-anchor="middle" font-size="8" fill="#6b7280">LLM reasoning loop</text>
+
+  <rect x="630" y="248" width="130" height="44" rx="6" fill="white" stroke="#22c55e" stroke-width="1"/>
+  <text x="695" y="268" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">Rate Limiting</text>
+  <text x="695" y="282" text-anchor="middle" font-size="8" fill="#6b7280">Per-role tiers</text>
+
+  <rect x="50" y="305" width="130" height="44" rx="6" fill="white" stroke="#22c55e" stroke-width="1"/>
+  <text x="115" y="325" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">Multi-Modal</text>
+  <text x="115" y="339" text-anchor="middle" font-size="8" fill="#6b7280">PDF·OCR·Vision·Code</text>
+
+  <rect x="195" y="305" width="130" height="44" rx="6" fill="white" stroke="#22c55e" stroke-width="1"/>
+  <text x="260" y="325" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">Admin Panel</text>
+  <text x="260" y="339" text-anchor="middle" font-size="8" fill="#6b7280">Users·Memory·Graph</text>
+
+  <rect x="340" y="305" width="130" height="44" rx="6" fill="white" stroke="#22c55e" stroke-width="1"/>
+  <text x="405" y="325" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">Metrics</text>
+  <text x="405" y="339" text-anchor="middle" font-size="8" fill="#6b7280">Prometheus /metrics</text>
+
+  <rect x="485" y="305" width="130" height="44" rx="6" fill="white" stroke="#22c55e" stroke-width="1"/>
+  <text x="550" y="325" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">Cost Tracking</text>
+  <text x="550" y="339" text-anchor="middle" font-size="8" fill="#6b7280">Token attribution</text>
+
+  <rect x="630" y="305" width="130" height="44" rx="6" fill="white" stroke="#22c55e" stroke-width="1"/>
+  <text x="695" y="325" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">Compression</text>
+  <text x="695" y="339" text-anchor="middle" font-size="8" fill="#6b7280">30-60% token savings</text>
+
+  <!-- Worker -->
+  <rect x="30" y="410" width="750" height="120" rx="12" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="60" y="435" font-size="11" font-weight="bold" fill="#92400e">WORKER (Background Processing)</text>
+
+  <rect x="50" y="448" width="85" height="38" rx="5" fill="white" stroke="#f59e0b" stroke-width="1"/>
+  <text x="92" y="471" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">Segment</text>
+
+  <text x="143" y="469" font-size="14" fill="#92400e">→</text>
+
+  <rect x="155" y="448" width="85" height="38" rx="5" fill="white" stroke="#f59e0b" stroke-width="1"/>
+  <text x="197" y="471" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">Embed</text>
+
+  <text x="248" y="469" font-size="14" fill="#92400e">→</text>
+
+  <rect x="260" y="448" width="85" height="38" rx="5" fill="white" stroke="#f59e0b" stroke-width="1"/>
+  <text x="302" y="471" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">Facts</text>
+
+  <text x="353" y="469" font-size="14" fill="#92400e">→</text>
+
+  <rect x="365" y="448" width="85" height="38" rx="5" fill="white" stroke="#f59e0b" stroke-width="1"/>
+  <text x="407" y="471" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">Dedup</text>
+
+  <text x="458" y="469" font-size="14" fill="#92400e">→</text>
+
+  <rect x="470" y="448" width="85" height="38" rx="5" fill="white" stroke="#f59e0b" stroke-width="1"/>
+  <text x="512" y="471" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">Temporal</text>
+
+  <text x="563" y="469" font-size="14" fill="#92400e">→</text>
+
+  <rect x="575" y="448" width="85" height="38" rx="5" fill="white" stroke="#f59e0b" stroke-width="1"/>
+  <text x="617" y="471" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">Graph</text>
+
+  <text x="668" y="469" font-size="14" fill="#92400e">→</text>
+
+  <rect x="680" y="448" width="85" height="38" rx="5" fill="white" stroke="#f59e0b" stroke-width="1"/>
+  <text x="722" y="465" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">Contradict</text>
+  <text x="722" y="479" text-anchor="middle" font-size="8" fill="#6b7280">Auto-supersede</text>
+
+  <text x="60" y="510" font-size="9" fill="#6b7280">+ Auto-Compaction (6h) · Confidence Calibration · Reaper Recovery · Adaptive Weights</text>
+
+  <!-- Storage Layer -->
+  <rect x="30" y="550" width="750" height="150" rx="12" fill="#fdf2f8" stroke="#ec4899" stroke-width="1.5"/>
+  <text x="60" y="575" font-size="11" font-weight="bold" fill="#9d174d">STORAGE LAYER</text>
+
+  <rect x="50" y="588" width="220" height="95" rx="8" fill="white" stroke="#ec4899" stroke-width="1"/>
+  <text x="160" y="610" text-anchor="middle" font-size="11" font-weight="700" fill="#9d174d">PostgreSQL 16</text>
+  <text x="160" y="628" text-anchor="middle" font-size="9" fill="#6b7280">pgvector (768d HNSW) · Full-text search</text>
+  <text x="160" y="643" text-anchor="middle" font-size="9" fill="#6b7280">Knowledge graph · Temporal versioning</text>
+  <text x="160" y="658" text-anchor="middle" font-size="9" fill="#6b7280">Auth · Audit log · Migrations</text>
+  <text x="160" y="673" text-anchor="middle" font-size="9" fill="#6b7280">fact_versions · temporal_edges</text>
+
+  <rect x="290" y="588" width="220" height="95" rx="8" fill="white" stroke="#ec4899" stroke-width="1"/>
+  <text x="400" y="610" text-anchor="middle" font-size="11" font-weight="700" fill="#9d174d">Redis 7</text>
+  <text x="400" y="628" text-anchor="middle" font-size="9" fill="#6b7280">Job queues (BRPOP)</text>
+  <text x="400" y="643" text-anchor="middle" font-size="9" fill="#6b7280">Search cache (5min TTL)</text>
+  <text x="400" y="658" text-anchor="middle" font-size="9" fill="#6b7280">Rate limit state</text>
+  <text x="400" y="673" text-anchor="middle" font-size="9" fill="#6b7280">Metrics aggregation</text>
+
+  <rect x="530" y="588" width="220" height="95" rx="8" fill="white" stroke="#ec4899" stroke-width="1"/>
+  <text x="640" y="610" text-anchor="middle" font-size="11" font-weight="700" fill="#9d174d">S3 / MinIO</text>
+  <text x="640" y="628" text-anchor="middle" font-size="9" fill="#6b7280">Raw session payloads</text>
+  <text x="640" y="643" text-anchor="middle" font-size="9" fill="#6b7280">Document uploads</text>
+  <text x="640" y="658" text-anchor="middle" font-size="9" fill="#6b7280">Versioning + encryption</text>
+  <text x="640" y="673" text-anchor="middle" font-size="9" fill="#6b7280">Lifecycle management</text>
+
+  <!-- Intelligence Panel -->
+  <rect x="810" y="210" width="360" height="320" rx="12" fill="#f5f3ff" stroke="#8b5cf6" stroke-width="1.5"/>
+  <text x="840" y="235" font-size="11" font-weight="bold" fill="#5b21b6">INTELLIGENCE</text>
+
+  <rect x="830" y="248" width="150" height="44" rx="6" fill="white" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="905" y="268" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6">Embedding</text>
+  <text x="905" y="282" text-anchor="middle" font-size="8" fill="#6b7280">Ollama nomic-embed-text</text>
+
+  <rect x="995" y="248" width="150" height="44" rx="6" fill="white" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="1070" y="268" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6">LLM</text>
+  <text x="1070" y="282" text-anchor="middle" font-size="8" fill="#6b7280">Ollama·OpenAI·Anthropic</text>
+
+  <rect x="830" y="305" width="150" height="44" rx="6" fill="white" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="905" y="325" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6">Vision</text>
+  <text x="905" y="339" text-anchor="middle" font-size="8" fill="#6b7280">llava·gpt-4o·claude</text>
+
+  <rect x="995" y="305" width="150" height="44" rx="6" fill="white" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="1070" y="325" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6">Compaction</text>
+  <text x="1070" y="339" text-anchor="middle" font-size="8" fill="#6b7280">Session summarization</text>
+
+  <rect x="830" y="365" width="315" height="44" rx="6" fill="white" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="987" y="385" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6">Retrieval Signals (RRF Fusion)</text>
+  <text x="987" y="399" text-anchor="middle" font-size="8" fill="#6b7280">Semantic 0.25 · Keyword 0.10 · Entity 0.08 · Graph 0.07 · Temporal 0.15 · Usage 0.10</text>
+
+  <rect x="830" y="422" width="315" height="44" rx="6" fill="white" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="987" y="442" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6">Contradiction Detection</text>
+  <text x="987" y="456" text-anchor="middle" font-size="8" fill="#6b7280">Cosine &gt;0.85 + entity match → auto-supersede</text>
+
+  <rect x="830" y="480" width="315" height="38" rx="6" fill="white" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="987" y="503" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6">Adaptive Weights · Feedback Loop</text>
+
+  <!-- Solo Mode -->
+  <rect x="810" y="550" width="360" height="150" rx="12" fill="#f0fdfa" stroke="#14b8a6" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="840" y="575" font-size="11" font-weight="bold" fill="#0f766e">SOLO MODE (optional, zero deps)</text>
+
+  <rect x="830" y="590" width="150" height="38" rx="5" fill="white" stroke="#14b8a6" stroke-width="1"/>
+  <text x="905" y="613" text-anchor="middle" font-size="9" font-weight="600" fill="#0f766e">FileStore (~/.synapse/)</text>
+
+  <rect x="995" y="590" width="150" height="38" rx="5" fill="white" stroke="#14b8a6" stroke-width="1"/>
+  <text x="1070" y="613" text-anchor="middle" font-size="9" font-weight="600" fill="#0f766e">In-Memory Cache</text>
+
+  <rect x="830" y="640" width="150" height="38" rx="5" fill="white" stroke="#14b8a6" stroke-width="1"/>
+  <text x="905" y="657" text-anchor="middle" font-size="9" font-weight="600" fill="#0f766e">Vector Index</text>
+  <text x="905" y="670" text-anchor="middle" font-size="8" fill="#6b7280">Brute-force cosine</text>
+
+  <rect x="995" y="640" width="150" height="38" rx="5" fill="white" stroke="#14b8a6" stroke-width="1"/>
+  <text x="1070" y="657" text-anchor="middle" font-size="9" font-weight="600" fill="#0f766e">Text Index</text>
+  <text x="1070" y="670" text-anchor="middle" font-size="8" fill="#6b7280">TF-IDF keyword</text>
+
+  <text x="987" y="698" text-anchor="middle" font-size="9" fill="#0f766e">localhost:3333 · Single binary · No PostgreSQL/Redis/S3</text>
+
+  <!-- Benchmark badge -->
+  <rect x="50" y="710" width="200" height="0" rx="4" fill="none"/>
+  <text x="600" y="712" text-anchor="middle" font-size="10" fill="#6b7280">Recall@5: 94.2% · MRR: 0.874 · Avg Latency: 48ms · 20K+ sessions tested</text>
+</svg>

@@ -57,6 +57,10 @@ Solo Mode (alternative): Single binary, ~/.synapse/, no external deps
 
 ![Data Flow Diagram](docs/assets/data-flow.svg)
 
+## System Components
+
+![System Components](docs/assets/system-components.svg)
+
 ## Data Flow
 
 ![Data Flow Paths](docs/assets/data-flow-paths.svg)
