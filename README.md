@@ -19,7 +19,7 @@
 | **Share** | Cross-agent shared context with deduplication for multi-tool workflows |
 | **Observe** | Prometheus `/metrics`, token cost attribution, structured audit log, queue visibility |
 | **Benchmark** | **Built-in evaluation suite: 94.2% Recall@5 on LongMemEval, 86.0% on BEAM** |
-| **Wrap** | Zero-config setup: `synapse wrap claude` / `cursor` / `kiro` / `codex` |
+| **Wrap** | Zero-config setup: `synapse wrap claude` / `cursor` / `kiro` / `codex` / `muse` |
 
 ## Architecture
 

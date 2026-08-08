@@ -21,6 +21,7 @@ Supported agents:
   cursor    — Cursor IDE
   codex     — OpenAI Codex CLI
   kiro      — Kiro IDE
+  muse      — Meta Muse Code
   vscode    — VS Code (generic MCP)
   continue  — Continue.dev
   cline     — Cline
@@ -51,6 +52,8 @@ Example:
 		wrapCursor(synapseBin, token, apiURL)
 	case "codex":
 		wrapCodex(synapseBin, token, apiURL)
+	case "muse":
+		wrapMuse(synapseBin, token, apiURL)
 	case "kiro":
 		wrapKiro(synapseBin, token, apiURL)
 	case "vscode":
@@ -83,6 +86,9 @@ func UnwrapAgent(args []string) {
 	case "kiro":
 		path := kiroConfigPath()
 		removeKey(path, "synapse")
+	case "muse":
+		path := museConfigPath()
+		removeKey(path, "synapse")
 	default:
 		fmt.Fprintf(os.Stderr, "Unwrap not yet implemented for: %s\n", agent)
 		os.Exit(1)
@@ -110,6 +116,14 @@ func wrapCodex(bin, token, apiURL string) {
 	config := mcpServerEntry(bin, token, apiURL)
 	writeOrMergeMCP(path, "synapse", config)
 	fmt.Printf("✓ Codex configured.\n  Config: %s\n  MCP server: synapse (11 tools)\n", path)
+}
+
+func wrapMuse(bin, token, apiURL string) {
+	path := museConfigPath()
+	config := mcpServerEntry(bin, token, apiURL)
+	writeOrMergeMCP(path, "synapse", config)
+	fmt.Printf("✓ Muse Code configured.\n  Config: %s\n  MCP server: synapse (11 tools)\n", path)
+	fmt.Printf("  Restart Muse Code to activate.\n")
 }
 
 func wrapKiro(bin, token, apiURL string) {
@@ -156,6 +170,11 @@ func cursorConfigPath() string {
 func codexConfigPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".codex", "mcp.json")
+}
+
+func museConfigPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".muse", "mcp.json")
 }
 
 func kiroConfigPath() string {
