@@ -19,13 +19,13 @@ func NewSessionRepo(db *DB) *SessionRepo { return &SessionRepo{db: db} }
 
 func (r *SessionRepo) Create(ctx context.Context, s *models.Session) error {
 	return r.db.Exec(ctx, `
-		INSERT INTO sessions (id, client_id, developer_id, organization_id, team_id,
-			status, searchable_status, enrichment_status, raw_storage_key,
+		INSERT INTO sessions (id, client_id, conversation_id, developer_id, organization_id,
+			team_id, status, searchable_status, enrichment_status, raw_storage_key,
 			total_tokens, message_count, metadata, started_at, ended_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT DO NOTHING`,
-		s.ID, s.ClientID, s.DeveloperID, s.OrganizationID, s.TeamID,
-		s.Status, s.SearchableStatus, s.EnrichmentStatus, s.RawStorageKey,
+		s.ID, s.ClientID, s.ConversationID, s.DeveloperID, s.OrganizationID,
+		s.TeamID, s.Status, s.SearchableStatus, s.EnrichmentStatus, s.RawStorageKey,
 		s.TotalTokens, s.MessageCount, s.Metadata, s.StartedAt, s.EndedAt,
 	)
 }

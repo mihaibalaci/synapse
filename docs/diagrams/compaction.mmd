@@ -5,21 +5,32 @@ flowchart TD
         CRON[Kubernetes CronJob]
     end
 
-    subgraph Selection["Candidate Selection"]
-        FIND[Find sessions >14 days old]
+    subgraph Level1["Level 1: Conversations"]
+        CONV_FIND[Group sessions by conversation_id<br/>≥2 batches, newest >14 days old]
+        CONV_LOAD[Load active chunks across batches<br/>chronological order]
+    end
+
+    subgraph Level2["Level 2: Standalone Sessions"]
+        FIND[Find sessions >14 days old<br/>not part of a multi-batch conversation]
         FILTER[Filter: ≥3 active chunks<br/>No existing summary]
     end
 
+    subgraph Level3["Level 3: Topics"]
+        TOPIC_SEED[Summaries >28 days old<br/>oldest first]
+        TOPIC_NN[Nearest neighbors<br/>cosine ≥0.82]
+        TOPIC_SPAN[Require ≥2 distinct conversations]
+    end
+
     subgraph Summarization["LLM Summarization"]
-        BUILD[Build prompt from chunks<br/>Max 12K chars]
-        CALL_LLM[Call LLM<br/>Ollama/OpenAI/Anthropic]
+        BUILD[Build prompt from chunks<br/>12K chars, equal share per member]
+        CALL_LLM[Call LLM<br/>Ollama/OpenAI/Anthropic<br/>prompt per level]
         VALIDATE[Validate non-empty summary]
     end
 
     subgraph Persistence["Atomic Persistence"]
         EMBED_SUM[Embed summary (768d)]
-        INSERT[INSERT summary chunk<br/>type=summary, confidence=high]
-        ARCHIVE[UPDATE original chunks<br/>confidence=archived]
+        INSERT[INSERT summary chunk<br/>type=summary/conversation_summary/topic_summary<br/>member_chunk_ids records lineage]
+        ARCHIVE[UPDATE member chunks<br/>confidence=archived]
         TX[PostgreSQL Transaction]
     end
 
@@ -36,10 +47,15 @@ flowchart TD
         WEAKEN[Chunk decay: zero usage >60d]
     end
 
-    TIMER --> FIND
-    CLI_CMD --> FIND
-    CRON --> FIND
-    FIND --> FILTER --> BUILD --> CALL_LLM --> VALIDATE
+    TIMER --> CONV_FIND
+    CLI_CMD --> CONV_FIND
+    CRON --> CONV_FIND
+    CONV_FIND --> CONV_LOAD --> BUILD
+    CONV_LOAD -.->|then| FIND
+    FIND --> FILTER --> BUILD
+    FILTER -.->|then| TOPIC_SEED
+    TOPIC_SEED --> TOPIC_NN --> TOPIC_SPAN --> BUILD
+    BUILD --> CALL_LLM --> VALIDATE
     VALIDATE --> EMBED_SUM --> TX
     TX --> INSERT
     TX --> ARCHIVE

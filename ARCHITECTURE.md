@@ -89,7 +89,10 @@ Fused via Reciprocal Rank Fusion, then ranked with temporal decay (30-day half-l
 
 ## Intelligence
 
-- **Compaction**: every 6 hours, old sessions are LLM-summarized into canonical chunks
+- **Compaction**: every 6 hours, in three ordered levels — the capture batches of
+  one conversation are consolidated first, then standalone sessions, then
+  summaries of separate conversations that share a topic. Each level LLM-
+  summarizes its inputs and archives them; raw captures are never touched.
 - **Contradiction Detection**: embedding similarity >0.85 + identical entities → auto-supersession
 - **Confidence Calibration**: 90-day fact decay, usage-based chunk quality boost/decay
 - **Adaptive Retrieval**: per-org signal weights learned from user feedback

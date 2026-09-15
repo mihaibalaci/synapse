@@ -657,7 +657,8 @@ func handleLearningStats(w http.ResponseWriter, r *http.Request) {
 	_ = app.DB.QueryRow(ctx, `SELECT count(*) FROM memory_facts WHERE organization_id = $1`, orgID).Scan(&factsTotal)
 	_ = app.DB.QueryRow(ctx, `SELECT count(*) FROM memory_facts WHERE organization_id = $1 AND created_at > NOW() - interval '7 days'`, orgID).Scan(&facts7d)
 	_ = app.DB.QueryRow(ctx, `SELECT count(*) FROM memory_facts WHERE organization_id = $1 AND temporal_valid_until IS NOT NULL`, orgID).Scan(&factsSuperseded)
-	_ = app.DB.QueryRow(ctx, `SELECT count(*) FROM chunks WHERE organization_id = $1 AND type = 'summary'`, orgID).Scan(&chunksCompacted)
+	_ = app.DB.QueryRow(ctx, `SELECT count(*) FROM chunks WHERE organization_id = $1
+		AND type IN ('summary', 'conversation_summary', 'topic_summary')`, orgID).Scan(&chunksCompacted)
 	_ = app.DB.QueryRow(ctx, `SELECT COALESCE(AVG(confidence), 0) FROM memory_facts WHERE organization_id = $1 AND temporal_valid_until IS NULL`, orgID).Scan(&avgConfidence)
 
 	isLearning := facts7d > 0

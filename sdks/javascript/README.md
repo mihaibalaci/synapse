@@ -36,7 +36,11 @@ await client.capture([
 const tracker = new SessionTracker(client, { repository: 'org/repo' });
 tracker.add('user', "Let's use PostgreSQL for this");
 tracker.add('assistant', 'Good choice for ACID compliance');
-// Auto-flushes at 10 messages or every 5 minutes
+// Auto-flushes every 4 messages, or every 5 minutes
+
+// Every batch shares a conversation id, so Synapse consolidates them into one
+// conversation during compaction. Start a new discussion explicitly:
+await tracker.newConversation();
 await tracker.close();
 ```
 

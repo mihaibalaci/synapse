@@ -15,13 +15,18 @@ export interface CaptureOptions {
   source?: string;
   repository?: string;
   language?: string;
+  /** Shared by every batch of one conversation so compaction can consolidate them. */
+  conversationId?: string;
 }
 
 export interface SessionTrackerOptions {
   repository?: string;
   language?: string;
+  /** Messages buffered before an automatic push (default: 4, minimum: 2). */
   flushThreshold?: number;
   flushIntervalMs?: number;
+  /** Reuse an existing conversation id instead of generating one. */
+  conversationId?: string;
 }
 
 export declare class SynapseClient {
@@ -38,8 +43,13 @@ export declare class SynapseClient {
 
 export declare class SessionTracker {
   constructor(client: SynapseClient, options?: SessionTrackerOptions);
+  readonly conversationId: string;
+  /** Messages buffered but not yet pushed. */
+  readonly pending: number;
   add(role: string, content: string): Promise<any>;
-  flush(): Promise<any>;
+  /** Pass final to also send a lone trailing message, paired with the previous one. */
+  flush(options?: { final?: boolean }): Promise<any>;
+  newConversation(conversationId?: string): Promise<string>;
   close(): Promise<any>;
 }
 

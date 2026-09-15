@@ -14,7 +14,7 @@
 | **Search** | 4-signal hybrid: semantic (pgvector), keyword (FTS), entity overlap, graph neighbors |
 | **Temporal** | **Version chains track fact evolution, point-in-time queries, change frequency analysis** |
 | **Learn** | LLM-powered reflection, confidence calibration, contradiction detection, adaptive ranking |
-| **Compact** | Automatic session summarization via LLM, cross-session deduplication |
+| **Compact** | Ordered LLM summarization — conversation batches, then sessions, then topics across conversations — plus cross-session deduplication |
 | **Optimize** | Context compression (30–60%), verbosity steering, effort routing for LLM calls |
 | **Share** | Cross-agent shared context with deduplication for multi-tool workflows |
 | **Observe** | Prometheus `/metrics`, token cost attribution, structured audit log, queue visibility |

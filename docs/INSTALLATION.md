@@ -56,6 +56,24 @@ Required for compaction, reflection, and contradiction detection:
 | `LLM_BASE_URL` | `http://127.0.0.1:11434` |
 | `LLM_MODEL` | `qwen2.5:3b-instruct-q4_K_M` |
 
+## Compaction Configuration (optional)
+
+Compaction condenses memory in three ordered levels: the capture batches of one
+conversation first, then standalone sessions, then summaries of separate
+conversations covering the same topic.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COMPACTION_INTERVAL_HOURS` | 6 | Worker compaction interval |
+| `COMPACTION_MIN_AGE_DAYS` | 14 | Age of the newest batch before a conversation or session is eligible |
+| `COMPACTION_MAX_PER_RUN` | 100 | Conversations plus standalone sessions per run |
+| `COMPACTION_ORGANIZATIONS` | all | `all`, or a single organization id (no lists) |
+| `COMPACTION_TOPIC_ENABLED` | true | Merge summaries across conversations |
+| `COMPACTION_TOPIC_MIN_AGE_DAYS` | 2× min age | How long conversation summaries stay standalone first |
+| `COMPACTION_TOPIC_SIMILARITY` | 0.82 | Cosine similarity for "same topic" (0–1) |
+| `COMPACTION_TOPIC_MIN_CONVERSATIONS` | 2 | Distinct conversations required per topic merge |
+| `COMPACTION_MAX_CLUSTERS` | 50 | Topic merges per run |
+
 ## OIDC Configuration (optional)
 
 | Variable | Description |

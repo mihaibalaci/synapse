@@ -4,6 +4,29 @@ All notable changes to Synapse are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### Conversation Grouping
+- `conversationId` on `POST /api/v1/capture/passive` and `/active`, stored as `sessions.conversation_id` (migration 009). Optional; namespaced server-side with the authenticated developer so ids only need to be unique per user.
+- SDK trackers generate a conversation id per instance and send it with every batch. `new_conversation()` / `newConversation()` starts a new one.
+- `chunks.member_chunk_ids` records which chunks a summary replaced.
+
+#### Ordered Compaction
+- Compaction now runs three levels in order: conversations (all batches of one conversation), then standalone sessions, then topics (summaries of separate conversations that cover the same subject).
+- A session that belongs to a multi-batch conversation is no longer summarized on its own; its conversation is consolidated first.
+- A conversation is eligible only once its newest batch is older than `COMPACTION_MIN_AGE_DAYS`, so conversations still being flushed are left alone.
+- Topic grouping is greedy nearest-neighbor over summary embeddings, requiring `COMPACTION_TOPIC_SIMILARITY` (0.82) and coverage of `COMPACTION_TOPIC_MIN_CONVERSATIONS` (2) distinct conversations, with members held back until `COMPACTION_TOPIC_MIN_AGE_DAYS`.
+- New chunk types `conversation_summary` and `topic_summary` alongside `summary`; all are searchable.
+- Run results report `conversationsCompacted`, `sessionsCompacted`, and `topicsCompacted`.
+
+### Changed
+- SDK `SessionTracker` flush threshold now defaults to 4 messages (was 10), floored at the 2-message API minimum.
+- Compaction organization filtering moved into SQL, so a busy organization can no longer consume the per-run limit ahead of the requested one.
+- Summary prompts give each member chunk an equal share of the character budget. Previously the prompt filled first-come and later chunks could be archived without appearing in the summary that replaced them.
+- Helm `compaction` values now match the settings the binary reads: `minAgeDays`, `maxPerRun`, `topic.*`, and `maxClusters` replace the unread `maxPrune` and `archiveDays`.
+
 ## [1.2.0] - 2026-08-07
 
 ### Added

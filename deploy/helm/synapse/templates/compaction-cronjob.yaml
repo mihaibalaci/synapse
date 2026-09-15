@@ -46,9 +46,13 @@ spec:
                 - { name: LLM_MODEL, value: {{ .Values.llm.model | default .Values.llm.selfHosted.model | default "" | quote }} }
                 - { name: LLM_BASE_URL, value: {{ .Values.llm.selfHosted.url | quote }} }
                 - { name: COMPACTION_ORGANIZATIONS, value: {{ .Values.compaction.organizations | quote }} }
+                - { name: COMPACTION_MIN_AGE_DAYS, value: {{ .Values.compaction.minAgeDays | quote }} }
+                - { name: COMPACTION_MAX_PER_RUN, value: {{ .Values.compaction.maxPerRun | quote }} }
+                - { name: COMPACTION_TOPIC_ENABLED, value: {{ .Values.compaction.topic.enabled | quote }} }
+                - { name: COMPACTION_TOPIC_MIN_AGE_DAYS, value: {{ .Values.compaction.topic.minAgeDays | quote }} }
+                - { name: COMPACTION_TOPIC_SIMILARITY, value: {{ .Values.compaction.topic.similarity | quote }} }
+                - { name: COMPACTION_TOPIC_MIN_CONVERSATIONS, value: {{ .Values.compaction.topic.minConversations | quote }} }
                 - { name: COMPACTION_MAX_CLUSTERS, value: {{ .Values.compaction.maxClusters | quote }} }
-                - { name: COMPACTION_MAX_PRUNE, value: {{ .Values.compaction.maxPrune | quote }} }
-                - { name: COMPACTION_ARCHIVE_DAYS, value: {{ .Values.compaction.archiveDays | quote }} }
               resources:
                 requests: { cpu: {{ .Values.compaction.resources.requests.cpu }}, memory: {{ .Values.compaction.resources.requests.memory }} }
                 limits: { cpu: {{ .Values.compaction.resources.limits.cpu }}, memory: {{ .Values.compaction.resources.limits.memory }} }

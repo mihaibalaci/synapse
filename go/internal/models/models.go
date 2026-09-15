@@ -6,8 +6,12 @@ import "time"
 // ─── Session ─────────────────────────────────────────────────────────────────
 
 type Session struct {
-	ID               string    `json:"id"`
-	ClientID         string    `json:"clientId"`
+	ID       string `json:"id"`
+	ClientID string `json:"clientId"`
+	// ConversationID links the batches of one logical conversation. SDK
+	// trackers flush every few messages, so several sessions share this value.
+	// Empty means the client did not supply one and the session stands alone.
+	ConversationID   string    `json:"conversationId,omitempty"`
 	DeveloperID      string    `json:"developerId"`
 	OrganizationID   string    `json:"organizationId"`
 	TeamID           string    `json:"teamId,omitempty"`

@@ -61,11 +61,20 @@ AUTH_BOOTSTRAP_EMAIL=admin@synapse.local AUTH_BOOTSTRAP_PASSWORD='...' synapse a
 ```json
 {
   "messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
-  "source": "kiro", "repository": "org/repo", "language": "go"
+  "source": "kiro", "repository": "org/repo", "language": "go",
+  "conversationId": "3f1c...-client-generated"
 }
 ```
 
-Returns `202` with `sessionId`. Identity from JWT claims only.
+Returns `202` with `sessionId` and `conversationId`. Identity from JWT claims only.
+
+`conversationId` is optional and client-generated. Clients capture a live
+conversation in small batches (the SDK trackers push every 4 messages), so send
+the same value for every batch of one conversation. Compaction consolidates the
+batches of a conversation before summarizing anything, and sessions without a
+conversation id are treated as conversations of one batch. The value is
+namespaced with the authenticated developer on the server, so ids only need to
+be unique per user.
 
 ### Git-Aware Capture
 

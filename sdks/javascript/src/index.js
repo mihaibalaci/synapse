@@ -56,9 +56,17 @@ class SynapseClient {
     return this._request('POST', '/api/v1/context', body);
   }
 
-  /** Capture a conversation session. */
-  capture(messages, { source = 'sdk-js', repository = '', language = '' } = {}) {
-    return this._request('POST', '/api/v1/capture/passive', { messages, source, repository, language });
+  /**
+   * Capture a batch of conversation messages.
+   *
+   * Pass the same conversationId for every batch of one conversation so Synapse
+   * consolidates them before summarizing. Omit it and the batch is treated as a
+   * conversation of its own.
+   */
+  capture(messages, { source = 'sdk-js', repository = '', language = '', conversationId = '' } = {}) {
+    return this._request('POST', '/api/v1/capture/passive', {
+      messages, source, repository, language, conversationId,
+    });
   }
 
   /** Query atomic facts. */
@@ -87,7 +95,18 @@ class SynapseClient {
 }
 
 /**
+ * Messages buffered before a batch is pushed. Small on purpose: a crash or a
+ * forgotten close() can only lose what is still in the buffer, and every batch
+ * carries the conversation id so Synapse reassembles them during compaction.
+ */
+const DEFAULT_FLUSH_THRESHOLD = 4;
+
+/**
  * Automatic session tracker — accumulates messages and captures periodically.
+ *
+ * Every batch pushed by one tracker shares a conversation id, so compaction
+ * consolidates them back into a single conversation before summarizing. Call
+ * newConversation() when a genuinely new discussion starts.
  */
 class SessionTracker {
   /**
@@ -95,15 +114,30 @@ class SessionTracker {
    * @param {Object} options
    * @param {string} [options.repository]
    * @param {string} [options.language]
-   * @param {number} [options.flushThreshold] - Messages before auto-flush (default: 10)
+   * @param {number} [options.flushThreshold] - Messages before auto-flush (default: 4)
    * @param {number} [options.flushIntervalMs] - Auto-flush interval in ms (default: 300000)
+   * @param {string} [options.conversationId] - Reuse an existing conversation id
    */
-  constructor(client, { repository = '', language = '', flushThreshold = 10, flushIntervalMs = 300000 } = {}) {
+  constructor(client, {
+    repository = '',
+    language = '',
+    flushThreshold = DEFAULT_FLUSH_THRESHOLD,
+    flushIntervalMs = 300000,
+    conversationId = '',
+  } = {}) {
     this.client = client;
     this.repository = repository;
     this.language = language;
-    this.flushThreshold = flushThreshold;
+    // The API requires at least 2 messages per capture, so a lower threshold
+    // would buffer forever without ever producing a valid batch.
+    this.flushThreshold = Math.max(2, flushThreshold);
+    this.conversationId = conversationId || newConversationId();
     this._messages = [];
+    // Last message already pushed. The API requires two messages per batch, so a
+    // conversation ending on a single buffered message could never be sent;
+    // replaying this one alongside it keeps the final message instead of
+    // dropping it. The overlap is handled by ingestion deduplication.
+    this._lastSent = null;
     this._timer = flushIntervalMs > 0 ? setInterval(() => this.flush(), flushIntervalMs) : null;
     if (this._timer?.unref) this._timer.unref();
   }
@@ -117,28 +151,68 @@ class SessionTracker {
     return Promise.resolve(null);
   }
 
+  /** Messages buffered but not yet pushed. */
+  get pending() {
+    return this._messages.length;
+  }
+
   /** Flush accumulated messages to Synapse. */
-  async flush() {
-    if (this._messages.length < 2) return null;
-    const messages = this._messages.splice(0);
+  async flush({ final = false } = {}) {
+    if (this._messages.length === 0) return null;
+
+    let messages = this._messages.slice();
+    let replayed = false;
+    if (messages.length < 2) {
+      // Below the API minimum. Keep buffering unless this is the last chance to
+      // send, in which case pair it with the previous message.
+      if (!final || !this._lastSent) return null;
+      messages = [this._lastSent, ...messages];
+      replayed = true;
+    }
+
+    this._messages.length = 0;
     try {
-      return await this.client.capture(messages, {
+      const response = await this.client.capture(messages, {
         source: 'sdk-js-tracker',
         repository: this.repository,
         language: this.language,
+        conversationId: this.conversationId,
       });
+      this._lastSent = messages[messages.length - 1];
+      return response;
     } catch (err) {
-      // Re-queue on failure
-      this._messages.unshift(...messages);
+      // Re-queue on failure. A replayed message was already stored, so it is not
+      // added back to the buffer.
+      this._messages.unshift(...(replayed ? messages.slice(1) : messages));
       return null;
     }
+  }
+
+  /**
+   * Flush the current buffer and start a new conversation. Batches added after
+   * this call are grouped separately from earlier ones.
+   * @returns {Promise<string>} the new conversation id
+   */
+  async newConversation(conversationId = '') {
+    await this.flush({ final: true });
+    this.conversationId = conversationId || newConversationId();
+    this._lastSent = null;
+    return this.conversationId;
   }
 
   /** Stop the timer and flush remaining messages. */
   async close() {
     if (this._timer) clearInterval(this._timer);
-    return this.flush();
+    return this.flush({ final: true });
   }
+}
+
+/** Generate a conversation id, preferring the platform UUID generator. */
+function newConversationId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `conv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 class SynapseAPIError extends Error {

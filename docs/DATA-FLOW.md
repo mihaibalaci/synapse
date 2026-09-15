@@ -36,7 +36,7 @@ sequenceDiagram
   alt raw PUT fails
     A-->>C: 503; caller may retry
   end
-  A->>P: INSERT sessions (processing/pending)
+  A->>P: INSERT sessions (processing/pending, conversation_id from request)
   alt row insert fails
     A-->>C: 503 (raw object may be orphaned)
   end

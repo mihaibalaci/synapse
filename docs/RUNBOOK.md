@@ -104,4 +104,6 @@ A Redis loss can be recovered gradually from unfinished PostgreSQL sessions and 
 
 ## Known operational gaps
 
-No queue admission control, automatic dead-letter replay, Prometheus/OpenTelemetry export, alerting, fact-embedding backfill, real compaction, or automatic admin JWT rotation exists. Treat these as backlog, not hidden automation.
+No queue admission control, automatic dead-letter replay, Prometheus/OpenTelemetry export, alerting, fact-embedding backfill, or automatic admin JWT rotation exists. Treat these as backlog, not hidden automation.
+
+Compaction does run (worker interval, `synapse compact`, or the CronJob), but it condenses what retrieval ranks rather than reclaiming storage: members are marked `confidence = 'archived'` and kept, and raw captures in object storage are never modified.

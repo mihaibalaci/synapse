@@ -133,17 +133,32 @@ embeddingBackfill:
   targetVersion: 1
 
 compaction:
-  # The Go compact command currently reports a no-op; keep scheduling disabled
-  # until compaction has a real implementation.
+  # The worker already runs compaction on an interval (COMPACTION_INTERVAL_HOURS,
+  # 6h by default), so this CronJob is only needed when workers are scaled to
+  # zero or compaction should run on a fixed window instead.
   enabled: false
   # Weekly at 02:00 UTC on Sunday
   schedule: "0 2 * * 0"
-  # "all" discovers organizations from the sessions table.
-  # Set a comma-separated list to compact only specific orgs.
+  # "all" compacts every organization. Set a single organization id to scope a
+  # run; a comma-separated list is not supported.
   organizations: "all"
+  # Level 1 and 2: a conversation or standalone session is eligible once its most
+  # recent capture is this old.
+  minAgeDays: 14
+  # Conversations plus standalone sessions summarized per run.
+  maxPerRun: 100
+  # Level 3: merge summaries of separate conversations that share a topic.
+  topic:
+    enabled: true
+    # Keep per-conversation summaries retrievable on their own for this long
+    # before folding them into a topic summary. 0 means 2x minAgeDays.
+    minAgeDays: 28
+    # Minimum cosine similarity between summaries to count as the same topic.
+    similarity: 0.82
+    # Distinct conversations a group must span before merging is worthwhile.
+    minConversations: 2
+  # Topic merges per run.
   maxClusters: 50
-  maxPrune: 500
-  archiveDays: 90
   backoffLimit: 2
   activeDeadlineSeconds: 3600
   resources:

@@ -85,13 +85,20 @@ class SynapseClient:
         source: str = "sdk-python",
         repository: str = "",
         language: str = "",
+        conversation_id: str = "",
     ) -> Dict[str, Any]:
-        """Capture a conversation session."""
+        """Capture a batch of conversation messages.
+
+        Pass the same conversation_id for every batch of one conversation so
+        Synapse consolidates them before summarizing. Omit it and the batch is
+        treated as a conversation of its own.
+        """
         return self._request("POST", "/api/v1/capture/passive", {
             "messages": messages,
             "source": source,
             "repository": repository,
             "language": language,
+            "conversationId": conversation_id,
         })
 
     def get_facts(

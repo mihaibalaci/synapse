@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +32,10 @@ func CapturePassiveHandler(app *App) http.HandlerFunc {
 			Language string           `json:"language"`
 			DevID    string           `json:"developerId"`
 			OrgID    string           `json:"organizationId"`
+			// ConversationID is optional and client-generated. Every flush of the
+			// same live conversation should carry the same value so compaction can
+			// consolidate the batches before summarizing them.
+			ConversationID string `json:"conversationId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, `{"error":"VALIDATION_ERROR","message":"Invalid JSON"}`, http.StatusBadRequest)
@@ -46,6 +51,7 @@ func CapturePassiveHandler(app *App) http.HandlerFunc {
 		devID := claims.UserID
 
 		sessionID := uuid.New().String()
+		conversationID := normalizeConversationID(devID, req.ConversationID)
 
 		// Compute total tokens
 		totalTokens := 0
@@ -84,6 +90,7 @@ func CapturePassiveHandler(app *App) http.HandlerFunc {
 		session := &models.Session{
 			ID:               sessionID,
 			ClientID:         sessionID,
+			ConversationID:   conversationID,
 			DeveloperID:      devID,
 			OrganizationID:   orgID,
 			Status:           "processing",
@@ -135,12 +142,41 @@ func CapturePassiveHandler(app *App) http.HandlerFunc {
 
 		// Return immediately (async processing)
 		writeJSON(w, http.StatusAccepted, map[string]any{
-			"sessionId": sessionID,
-			"status":    "captured",
-			"mode":      "passive",
-			"message":   "Session captured and processing",
+			"sessionId":      sessionID,
+			"conversationId": conversationID,
+			"status":         "captured",
+			"mode":           "passive",
+			"message":        "Session captured and processing",
 		})
 	}
+}
+
+// normalizeConversationID prepares a client-supplied conversation identity for
+// storage. It is namespaced with the authenticated developer so that two people
+// in the same organization picking the same human-readable id (a real risk with
+// values like "chat-1") never have their conversations merged by compaction.
+// An empty or whitespace-only value yields "", meaning the session stands alone.
+func normalizeConversationID(devID, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// Bound the length so a hostile client cannot bloat the index. 120 bytes is
+	// far more than a UUID needs.
+	if len(raw) > 120 {
+		raw = raw[:120]
+	}
+	// Control characters would make the value awkward in logs and exports.
+	raw = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, raw)
+	if raw == "" {
+		return ""
+	}
+	return devID + ":" + raw
 }
 
 // CaptureActiveHandler handles explicit saves (same as passive but higher priority).

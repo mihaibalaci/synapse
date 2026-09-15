@@ -363,9 +363,11 @@ func runWorker(cfg *config.Config) {
 				result, err := compaction.Run(compactCtx, app.DB, embedder, compCfg)
 				if err != nil {
 					slog.Warn("Automatic compaction failed", "error", err)
-				} else if result.SessionsCompacted > 0 {
+				} else if result.SummariesCreated > 0 {
 					slog.Info("Automatic compaction complete",
+						"conversations", result.ConversationsCompacted,
 						"sessions", result.SessionsCompacted,
+						"topics", result.TopicsCompacted,
 						"tokensSaved", result.TokensSaved,
 						"errors", result.Errors)
 				}
@@ -411,7 +413,9 @@ func runCompaction(cfg *config.Config) {
 	}
 
 	slog.Info("Compaction complete",
+		"conversationsCompacted", result.ConversationsCompacted,
 		"sessionsCompacted", result.SessionsCompacted,
+		"topicsCompacted", result.TopicsCompacted,
 		"chunksArchived", result.ChunksArchived,
 		"summariesCreated", result.SummariesCreated,
 		"tokensSaved", result.TokensSaved,

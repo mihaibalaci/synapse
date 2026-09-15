@@ -12,12 +12,20 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/mihaibalaci/synapse/internal/ingestion"
 	"github.com/mihaibalaci/synapse/internal/storage"
+)
+
+// Chunk types produced by the three compaction levels. They are ordinary
+// searchable chunks; the type records how far the content has been condensed.
+const (
+	TypeSessionSummary      = "summary"              // one capture batch
+	TypeConversationSummary = "conversation_summary" // every batch of one conversation
+	TypeTopicSummary        = "topic_summary"        // several conversations on one topic
 )
 
 // Config controls compaction behavior.
@@ -30,79 +38,72 @@ type Config struct {
 	LLMBaseURL   string
 	LLMAPIKey    string
 	Organization string // "all" or specific org
+
+	// ─── Topic consolidation (level 3) ───────────────────────────────────────
+	// TopicEnabled turns the cross-conversation phase on (default true).
+	TopicEnabled bool
+	// TopicMinAgeDays keeps conversation summaries intact for a while before
+	// they are folded into a topic summary, so a run does not immediately
+	// discard the per-conversation view it just produced (default 2x MinAgeDays).
+	TopicMinAgeDays int
+	// TopicSimilarity is the minimum cosine similarity for two summaries to be
+	// considered the same topic (default 0.82).
+	TopicSimilarity float64
+	// TopicMinConversations is how many distinct conversations a topic group
+	// must span before it is worth merging (default 2).
+	TopicMinConversations int
+	// TopicMaxClusters caps topic merges per run (default 50).
+	TopicMaxClusters int
 }
 
 // Result summarizes a compaction run.
 type Result struct {
-	SessionsCompacted int   `json:"sessionsCompacted"`
-	ChunksArchived    int   `json:"chunksArchived"`
-	SummariesCreated  int   `json:"summariesCreated"`
-	TokensSaved       int64 `json:"tokensSaved"`
-	Errors            int   `json:"errors"`
-	DurationMs        int64 `json:"durationMs"`
+	ConversationsCompacted int   `json:"conversationsCompacted"`
+	SessionsCompacted      int   `json:"sessionsCompacted"`
+	TopicsCompacted        int   `json:"topicsCompacted"`
+	ChunksArchived         int   `json:"chunksArchived"`
+	SummariesCreated       int   `json:"summariesCreated"`
+	TokensSaved            int64 `json:"tokensSaved"`
+	Errors                 int   `json:"errors"`
+	DurationMs             int64 `json:"durationMs"`
 }
 
-// Run executes the compaction pipeline.
+// Run executes the compaction pipeline in three ordered levels, coarsening one
+// step at a time so nothing is summarized out of order:
+//
+//  1. Conversations. A live conversation is captured as several batches, so its
+//     sessions are consolidated into one conversation summary first. Compacting
+//     those batches separately would produce several partial summaries of the
+//     same discussion.
+//  2. Standalone sessions. Only sessions that are not part of a multi-batch
+//     conversation are summarized on their own.
+//  3. Topics. Conversation and session summaries that cover the same subject
+//     across different conversations are merged into one topic summary.
+//
+// Every level replaces its inputs by inserting a summary and marking the inputs
+// archived. Nothing is deleted, and the verbatim capture in object storage is
+// never touched, so any level can be rebuilt from source.
 func Run(ctx context.Context, db *storage.DB, embedder *ingestion.EmbeddingClient, cfg Config) (*Result, error) {
-	if cfg.MinAgeDays <= 0 {
-		cfg.MinAgeDays = 14
-	}
-	if cfg.MaxPerRun <= 0 {
-		cfg.MaxPerRun = 100
-	}
-	if cfg.Workers <= 0 {
-		cfg.Workers = 4
-	}
+	cfg = cfg.withDefaults()
 
 	start := time.Now()
 	result := &Result{}
 
-	// Find eligible sessions: old, searchable, and not yet compacted.
-	rows, err := db.Query(ctx, `
-		SELECT s.id, s.organization_id
-		FROM sessions s
-		WHERE s.searchable_status = 'searchable'
-		  AND s.updated_at < NOW() - ($1 || ' days')::interval
-		  AND NOT EXISTS (
-		    SELECT 1 FROM chunks c
-		    WHERE c.session_id = s.id AND c.type = 'summary'
-		  )
-		  AND (SELECT count(*) FROM chunks c2 WHERE c2.session_id = s.id AND c2.confidence <> 'archived') >= 3
-		ORDER BY s.updated_at ASC
-		LIMIT $2`,
-		fmt.Sprintf("%d", cfg.MinAgeDays), cfg.MaxPerRun)
-	if err != nil {
-		return nil, fmt.Errorf("find compaction candidates: %w", err)
-	}
-	defer rows.Close()
-
-	type candidate struct {
-		sessionID string
-		orgID     string
-	}
-	var candidates []candidate
-	for rows.Next() {
-		var c candidate
-		if err := rows.Scan(&c.sessionID, &c.orgID); err != nil {
-			return nil, fmt.Errorf("scan candidate: %w", err)
-		}
-		if cfg.Organization != "" && cfg.Organization != "all" && c.orgID != cfg.Organization {
-			continue
-		}
-		candidates = append(candidates, c)
+	// Level 1: same conversation → one summary.
+	if err := compactConversations(ctx, db, embedder, cfg, result); err != nil {
+		return nil, err
 	}
 
-	slog.Info("Compaction candidates found", "count", len(candidates))
+	// Level 2: sessions that belong to no multi-batch conversation.
+	if err := compactSessions(ctx, db, embedder, cfg, result); err != nil {
+		return nil, err
+	}
 
-	// Process each session sequentially for now (LLM is the bottleneck, not I/O)
-	for _, cand := range candidates {
-		if ctx.Err() != nil {
-			break
-		}
-		err := compactSession(ctx, db, embedder, cfg, cand.sessionID, cand.orgID, result)
-		if err != nil {
-			slog.Warn("Compaction failed for session", "session", cand.sessionID, "error", err)
-			result.Errors++
+	// Level 3: same topic across conversations. Runs last so it operates on the
+	// summaries the earlier levels produced.
+	if cfg.TopicEnabled {
+		if err := compactTopics(ctx, db, embedder, cfg, result); err != nil {
+			return nil, err
 		}
 	}
 
@@ -110,126 +111,131 @@ func Run(ctx context.Context, db *storage.DB, embedder *ingestion.EmbeddingClien
 	return result, nil
 }
 
-func compactSession(ctx context.Context, db *storage.DB, embedder *ingestion.EmbeddingClient, cfg Config, sessionID, orgID string, result *Result) error {
-	// Load all active chunks for this session
+// withDefaults fills in the settings a caller left unset.
+func (c Config) withDefaults() Config {
+	if c.MinAgeDays <= 0 {
+		c.MinAgeDays = 14
+	}
+	if c.MaxPerRun <= 0 {
+		c.MaxPerRun = 100
+	}
+	if c.Workers <= 0 {
+		c.Workers = 4
+	}
+	if c.TopicMinAgeDays <= 0 {
+		c.TopicMinAgeDays = c.MinAgeDays * 2
+	}
+	if c.TopicSimilarity <= 0 {
+		c.TopicSimilarity = 0.82
+	}
+	if c.TopicMinConversations <= 0 {
+		c.TopicMinConversations = 2
+	}
+	if c.TopicMaxClusters <= 0 {
+		c.TopicMaxClusters = 50
+	}
+	return c
+}
+
+// orgFilter renders the organization scope as a SQL-friendly parameter. "all"
+// (or empty) matches every organization. Filtering happens in SQL rather than
+// after the row limit, so a busy organization cannot starve the requested one.
+func (c Config) orgFilter() string {
+	if c.Organization == "" {
+		return "all"
+	}
+	return c.Organization
+}
+
+// compactSessions summarizes individual sessions that stand alone: either the
+// client sent no conversation id, or the conversation produced a single batch.
+// Sessions belonging to a multi-batch conversation are deliberately skipped here
+// because level 1 owns them.
+func compactSessions(ctx context.Context, db *storage.DB, embedder *ingestion.EmbeddingClient, cfg Config, result *Result) error {
 	rows, err := db.Query(ctx, `
-		SELECT id, title, content, token_count, author_id
-		FROM chunks
-		WHERE session_id = $1
-		  AND confidence <> 'archived'
-		ORDER BY created_at ASC`, sessionID)
+		SELECT s.id, s.organization_id
+		FROM sessions s
+		WHERE s.searchable_status = 'searchable'
+		  AND s.updated_at < NOW() - make_interval(days => $1::int)
+		  AND ($2 = 'all' OR s.organization_id = $2)
+		  AND NOT EXISTS (
+		    SELECT 1 FROM chunks c
+		    WHERE c.session_id = s.id
+		      AND c.type IN ('summary', 'conversation_summary', 'topic_summary')
+		  )
+		  AND (
+		    s.conversation_id = ''
+		    OR (SELECT count(*) FROM sessions sib
+		        WHERE sib.organization_id = s.organization_id
+		          AND sib.conversation_id = s.conversation_id) = 1
+		  )
+		  AND (SELECT count(*) FROM chunks c2
+		       WHERE c2.session_id = s.id AND c2.confidence <> 'archived') >= 3
+		ORDER BY s.updated_at ASC
+		LIMIT $3`,
+		cfg.MinAgeDays, cfg.orgFilter(), cfg.MaxPerRun)
 	if err != nil {
-		return fmt.Errorf("load chunks: %w", err)
+		return fmt.Errorf("find session candidates: %w", err)
 	}
-	defer rows.Close()
 
-	type chunk struct {
-		id         string
-		title      string
-		content    string
-		tokenCount int
-		authorID   string
-	}
-	var chunks []chunk
-	var totalTokens int64
+	type candidate struct{ sessionID, orgID string }
+	var candidates []candidate
 	for rows.Next() {
-		var c chunk
-		if err := rows.Scan(&c.id, &c.title, &c.content, &c.tokenCount, &c.authorID); err != nil {
-			return fmt.Errorf("scan chunk: %w", err)
+		var c candidate
+		if err := rows.Scan(&c.sessionID, &c.orgID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan session candidate: %w", err)
 		}
-		chunks = append(chunks, c)
-		totalTokens += int64(c.tokenCount)
+		candidates = append(candidates, c)
 	}
-	if len(chunks) < 3 {
-		return nil // too few to bother
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return fmt.Errorf("read session candidates: %w", err)
 	}
 
-	// Build the LLM prompt from chunk contents
-	var contentBuilder strings.Builder
-	for i, c := range chunks {
-		fmt.Fprintf(&contentBuilder, "--- Chunk %d: %s ---\n%s\n\n", i+1, c.title, c.content)
-		if contentBuilder.Len() > 12000 {
-			break // keep prompt bounded
+	slog.Info("Session compaction candidates found", "count", len(candidates))
+
+	// Sequential: the LLM call is the bottleneck, not the database.
+	for _, cand := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
+		if err := compactSession(ctx, db, embedder, cfg, cand.sessionID, cand.orgID, result); err != nil {
+			slog.Warn("Compaction failed for session", "session", cand.sessionID, "error", err)
+			result.Errors++
 		}
 	}
-
-	// COST OPTIMIZATION: Compress context before sending to LLM (30-60% token reduction)
-	rawContent := contentBuilder.String()
-	compressedContent := CompressForLLM(rawContent, 8000)
-	tokensSavedByCompression := int64(len(rawContent)/4 - len(compressedContent)/4)
-
-	summary, err := callLLM(ctx, cfg, compressedContent)
-	if err != nil {
-		return fmt.Errorf("LLM summarize: %w", err)
-	}
-	if strings.TrimSpace(summary) == "" {
-		return fmt.Errorf("LLM returned empty summary")
-	}
-
-	// Generate embedding for the summary
-	embedding, err := embedder.Embed(ctx, summary)
-	if err != nil {
-		return fmt.Errorf("embed summary: %w", err)
-	}
-
-	// Transaction: insert summary chunk + archive originals
-	summaryID := uuid.NewString()
-	poolTx, err := db.Pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin compact tx: %w", err)
-	}
-	defer poolTx.Rollback(ctx)
-
-	// Insert summary chunk
-	_, err = poolTx.Exec(ctx, `
-		INSERT INTO chunks (id, session_id, title, summary, content, token_count, type,
-			author_id, organization_id, embedding, embedding_model, searchable_status,
-			confidence, quality_score)
-		VALUES ($1, $2, $3, $4, $5, $6, 'summary', $7, $8, $9::vector, $10, 'searchable', 'high', 0.9)`,
-		summaryID, sessionID,
-		fmt.Sprintf("Summary: session %s", sessionID[:8]),
-		summary,
-		summary,
-		estimateTokens(summary),
-		chunks[0].authorID,
-		orgID,
-		storage.VectorParam(embedding),
-		embedder.Model(),
-	)
-	if err != nil {
-		return fmt.Errorf("insert summary: %w", err)
-	}
-
-	// Archive original chunks
-	chunkIDs := make([]string, len(chunks))
-	for i, c := range chunks {
-		chunkIDs[i] = c.id
-	}
-	_, err = poolTx.Exec(ctx, `
-		UPDATE chunks SET confidence = 'archived', updated_at = NOW()
-		WHERE id = ANY($1::uuid[])`, chunkIDs)
-	if err != nil {
-		return fmt.Errorf("archive chunks: %w", err)
-	}
-
-	if err := poolTx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit compaction: %w", err)
-	}
-
-	result.SessionsCompacted++
-	result.ChunksArchived += len(chunks)
-	result.SummariesCreated++
-	result.TokensSaved += totalTokens - int64(estimateTokens(summary)) + tokensSavedByCompression
 	return nil
 }
 
-func callLLM(ctx context.Context, cfg Config, content string) (string, error) {
+func compactSession(ctx context.Context, db *storage.DB, embedder *ingestion.EmbeddingClient, cfg Config, sessionID, orgID string, result *Result) error {
+	members, err := loadActiveChunks(ctx, db, []string{sessionID})
+	if err != nil {
+		return err
+	}
+	if len(members) < 3 {
+		return nil // too few to bother
+	}
+
+	return summarizeAndArchive(ctx, db, embedder, cfg, summarizeRequest{
+		orgID:           orgID,
+		attachSessionID: sessionID,
+		chunkType:       TypeSessionSummary,
+		title:           fmt.Sprintf("Summary: session %s", shortID(sessionID)),
+		system:          sessionSummarySystemPrompt,
+		members:         members,
+		counter:         &result.SessionsCompacted,
+	}, result)
+}
+
+// callLLM summarizes content with the system prompt for the compaction level
+// being run. Each level needs different instructions: a session summary
+// describes one batch, a conversation summary has to reconcile a discussion that
+// arrived in pieces, and a topic summary has to generalize across conversations.
+func callLLM(ctx context.Context, cfg Config, rawSystem, content string) (string, error) {
 	// OUTPUT OPTIMIZATION: Apply verbosity steering to reduce output tokens
-	system := OptimizedSystemPrompt(`You are a technical knowledge summarizer. Given a set of conversation chunks from a software engineering session, produce a concise summary that preserves:
-- Key decisions and their reasoning
-- Technical patterns and constraints discovered
-- Action items and open questions
-Keep the summary factual and under 500 words. Do not invent information not present in the chunks.`)
+	system := OptimizedSystemPrompt(rawSystem)
 
 	// EFFORT ROUTING: Compaction is routine — use minimal effort settings
 	effort := RouteEffort("compaction")
@@ -411,7 +417,39 @@ func LoadConfigFromEnv() Config {
 		LLMBaseURL:   os.Getenv("LLM_BASE_URL"),
 		LLMAPIKey:    coalesce(os.Getenv("OPENAI_API_KEY"), os.Getenv("ANTHROPIC_API_KEY")),
 		Organization: coalesce(os.Getenv("COMPACTION_ORGANIZATIONS"), "all"),
+
+		TopicEnabled:          envBool("COMPACTION_TOPIC_ENABLED", true),
+		TopicMinAgeDays:       envInt("COMPACTION_TOPIC_MIN_AGE_DAYS", 0), // 0 → 2x MinAgeDays
+		TopicSimilarity:       envFloat("COMPACTION_TOPIC_SIMILARITY", 0.82),
+		TopicMinConversations: envInt("COMPACTION_TOPIC_MIN_CONVERSATIONS", 2),
+		TopicMaxClusters:      envInt("COMPACTION_MAX_CLUSTERS", 50),
 	}
+}
+
+// envBool reads a boolean setting. Unlike envInt it must distinguish "unset"
+// from "explicitly false", so an unparseable value falls back rather than
+// silently enabling a phase the operator tried to turn off.
+func envBool(key string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func envFloat(key string, fallback float64) float64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f <= 0 || f > 1 {
+		return fallback
+	}
+	return f
 }
 
 func envInt(key string, fallback int) int {
