@@ -28,9 +28,17 @@ const (
 	TypeTopicSummary        = "topic_summary"        // several conversations on one topic
 )
 
+// defaultLLMTimeout bounds one summarization request when nothing is configured.
+const defaultLLMTimeout = 120 * time.Second
+
 // Config controls compaction behavior.
+//
+// The two age settings use a three-way convention so that both a bare Config{}
+// literal and an operator asking for immediate compaction get what they expect:
+// zero means "unset" and takes the safe default, a positive value is a threshold
+// in days, and a negative value is an explicit "no age gate".
 type Config struct {
-	MinAgeDays   int    // Sessions older than this are eligible (default 14)
+	MinAgeDays   int    // Sessions older than this are eligible (0 = default 14, negative = no gate)
 	MaxPerRun    int    // Max sessions to compact per invocation (default 100)
 	Workers      int    // Parallel LLM calls (default 4)
 	LLMProvider  string // ollama, openai, anthropic
@@ -38,13 +46,18 @@ type Config struct {
 	LLMBaseURL   string
 	LLMAPIKey    string
 	Organization string // "all" or specific org
+	// LLMTimeout bounds a single summarization request. Self-hosted CPU
+	// inference is far slower than a hosted API, so this has to be tunable
+	// rather than a fixed value that quietly fails every run on small hardware.
+	LLMTimeout time.Duration
 
 	// ─── Topic consolidation (level 3) ───────────────────────────────────────
 	// TopicEnabled turns the cross-conversation phase on (default true).
 	TopicEnabled bool
 	// TopicMinAgeDays keeps conversation summaries intact for a while before
 	// they are folded into a topic summary, so a run does not immediately
-	// discard the per-conversation view it just produced (default 2x MinAgeDays).
+	// discard the per-conversation view it just produced. Zero derives 2x
+	// MinAgeDays; negative disables the gate.
 	TopicMinAgeDays int
 	// TopicSimilarity is the minimum cosine similarity for two summaries to be
 	// considered the same topic (default 0.82).
@@ -113,17 +126,29 @@ func Run(ctx context.Context, db *storage.DB, embedder *ingestion.EmbeddingClien
 
 // withDefaults fills in the settings a caller left unset.
 func (c Config) withDefaults() Config {
-	if c.MinAgeDays <= 0 {
+	// Zero is "unset", so a Config{} literal still gets the conservative 14-day
+	// gate. Negative is the deliberate "compact regardless of age" opt-in, which
+	// configuration expresses as 0 and LoadConfigFromEnv translates.
+	switch {
+	case c.MinAgeDays == 0:
 		c.MinAgeDays = 14
+	case c.MinAgeDays < 0:
+		c.MinAgeDays = 0
 	}
 	if c.MaxPerRun <= 0 {
 		c.MaxPerRun = 100
 	}
+	if c.LLMTimeout <= 0 {
+		c.LLMTimeout = defaultLLMTimeout
+	}
 	if c.Workers <= 0 {
 		c.Workers = 4
 	}
-	if c.TopicMinAgeDays <= 0 {
+	switch {
+	case c.TopicMinAgeDays == 0:
 		c.TopicMinAgeDays = c.MinAgeDays * 2
+	case c.TopicMinAgeDays < 0:
+		c.TopicMinAgeDays = 0
 	}
 	if c.TopicSimilarity <= 0 {
 		c.TopicSimilarity = 0.82
@@ -242,7 +267,7 @@ func callLLM(ctx context.Context, cfg Config, rawSystem, content string) (string
 
 	switch cfg.LLMProvider {
 	case "ollama":
-		return callOllama(ctx, cfg, system, content)
+		return callOllama(ctx, cfg, system, content, effort)
 	case "openai":
 		return callOpenAICompact(ctx, cfg, system, content, effort)
 	case "anthropic":
@@ -252,7 +277,7 @@ func callLLM(ctx context.Context, cfg Config, rawSystem, content string) (string
 	}
 }
 
-func callOllama(ctx context.Context, cfg Config, system, user string) (string, error) {
+func callOllama(ctx context.Context, cfg Config, system, user string, effort EffortLevel) (string, error) {
 	baseURL := cfg.LLMBaseURL
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
@@ -260,12 +285,19 @@ func callOllama(ctx context.Context, cfg Config, system, user string) (string, e
 	body := map[string]any{
 		"model":  cfg.LLMModel,
 		"stream": false,
+		// Effort routing has to be expressed as Ollama options. Without
+		// num_predict the model generates until it decides to stop, which on a
+		// self-hosted CPU deployment runs far past any sensible request timeout.
+		"options": map[string]any{
+			"num_predict": MaxTokensForEffort(effort),
+			"temperature": TemperatureForEffort(effort),
+		},
 		"messages": []map[string]string{
 			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},
 	}
-	return doLLMRequest(ctx, baseURL+"/api/chat", body, nil, "ollama")
+	return doLLMRequest(ctx, baseURL+"/api/chat", body, nil, "ollama", cfg.LLMTimeout)
 }
 
 func callOpenAICompact(ctx context.Context, cfg Config, system, user string, effort EffortLevel) (string, error) {
@@ -279,7 +311,7 @@ func callOpenAICompact(ctx context.Context, cfg Config, system, user string, eff
 		},
 	}
 	headers := map[string]string{"Authorization": "Bearer " + cfg.LLMAPIKey}
-	return doLLMRequest(ctx, "https://api.openai.com/v1/chat/completions", body, headers, "openai")
+	return doLLMRequest(ctx, "https://api.openai.com/v1/chat/completions", body, headers, "openai", cfg.LLMTimeout)
 }
 
 func callAnthropicCompact(ctx context.Context, cfg Config, system, user string, effort EffortLevel) (string, error) {
@@ -294,7 +326,7 @@ func callAnthropicCompact(ctx context.Context, cfg Config, system, user string, 
 		"x-api-key":         cfg.LLMAPIKey,
 		"anthropic-version": "2023-06-01",
 	}
-	return doLLMRequest(ctx, "https://api.anthropic.com/v1/messages", body, headers, "anthropic")
+	return doLLMRequest(ctx, "https://api.anthropic.com/v1/messages", body, headers, "anthropic", cfg.LLMTimeout)
 }
 
 func callOpenAI(ctx context.Context, cfg Config, system, user string) (string, error) {
@@ -307,7 +339,7 @@ func callOpenAI(ctx context.Context, cfg Config, system, user string) (string, e
 		},
 	}
 	headers := map[string]string{"Authorization": "Bearer " + cfg.LLMAPIKey}
-	return doLLMRequest(ctx, "https://api.openai.com/v1/chat/completions", body, headers, "openai")
+	return doLLMRequest(ctx, "https://api.openai.com/v1/chat/completions", body, headers, "openai", cfg.LLMTimeout)
 }
 
 func callAnthropic(ctx context.Context, cfg Config, system, user string) (string, error) {
@@ -321,10 +353,13 @@ func callAnthropic(ctx context.Context, cfg Config, system, user string) (string
 		"x-api-key":         cfg.LLMAPIKey,
 		"anthropic-version": "2023-06-01",
 	}
-	return doLLMRequest(ctx, "https://api.anthropic.com/v1/messages", body, headers, "anthropic")
+	return doLLMRequest(ctx, "https://api.anthropic.com/v1/messages", body, headers, "anthropic", cfg.LLMTimeout)
 }
 
-func doLLMRequest(ctx context.Context, url string, body any, headers map[string]string, provider string) (string, error) {
+func doLLMRequest(ctx context.Context, url string, body any, headers map[string]string, provider string, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = defaultLLMTimeout
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("encode %s request: %w", provider, err)
@@ -338,7 +373,7 @@ func doLLMRequest(ctx context.Context, url string, body any, headers map[string]
 		req.Header.Set(k, v)
 	}
 
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("%s request: %w", provider, err)
@@ -409,7 +444,7 @@ func estimateTokens(text string) int {
 // LoadConfigFromEnv reads compaction settings from environment variables.
 func LoadConfigFromEnv() Config {
 	return Config{
-		MinAgeDays:   envInt("COMPACTION_MIN_AGE_DAYS", 14),
+		MinAgeDays:   envAgeDays("COMPACTION_MIN_AGE_DAYS", 14),
 		MaxPerRun:    envInt("COMPACTION_MAX_PER_RUN", 100),
 		Workers:      envInt("COMPACTION_WORKERS", 4),
 		LLMProvider:  os.Getenv("LLM_PROVIDER"),
@@ -417,13 +452,33 @@ func LoadConfigFromEnv() Config {
 		LLMBaseURL:   os.Getenv("LLM_BASE_URL"),
 		LLMAPIKey:    coalesce(os.Getenv("OPENAI_API_KEY"), os.Getenv("ANTHROPIC_API_KEY")),
 		Organization: coalesce(os.Getenv("COMPACTION_ORGANIZATIONS"), "all"),
+		LLMTimeout: time.Duration(envInt("COMPACTION_LLM_TIMEOUT_SECONDS",
+			int(defaultLLMTimeout/time.Second))) * time.Second,
 
 		TopicEnabled:          envBool("COMPACTION_TOPIC_ENABLED", true),
-		TopicMinAgeDays:       envInt("COMPACTION_TOPIC_MIN_AGE_DAYS", 0), // 0 → 2x MinAgeDays
+		TopicMinAgeDays:       envAgeDays("COMPACTION_TOPIC_MIN_AGE_DAYS", 0), // unset → 2x MinAgeDays
 		TopicSimilarity:       envFloat("COMPACTION_TOPIC_SIMILARITY", 0.82),
 		TopicMinConversations: envInt("COMPACTION_TOPIC_MIN_CONVERSATIONS", 2),
 		TopicMaxClusters:      envInt("COMPACTION_MAX_CLUSTERS", 50),
 	}
+}
+
+// envAgeDays reads an age-in-days threshold. An explicit 0 means "no age gate"
+// and is carried as -1, because the struct reserves 0 for "unset" so that a
+// Config{} literal cannot accidentally compact everything ever captured.
+func envAgeDays(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil || i < 0 {
+		return fallback
+	}
+	if i == 0 {
+		return -1
+	}
+	return i
 }
 
 // envBool reads a boolean setting. Unlike envInt it must distinguish "unset"

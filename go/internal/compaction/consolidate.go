@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -574,12 +575,17 @@ func countTopics(group []summaryRef) int {
 	return len(seen)
 }
 
+// reLevelSuffix matches the member count compaction appends to a summary title,
+// so a higher level does not inherit the lower level's tally.
+var reLevelSuffix = regexp.MustCompile(`\s*\(\d+ (batches|conversations)\)$`)
+
 // topicTitle derives a topic label from the seed summary's title, dropping the
-// level prefix that compaction itself added.
+// level prefix and member count that compaction itself added.
 func topicTitle(title string) string {
 	for _, prefix := range []string{"Conversation summary: ", "Summary: ", "Topic summary: "} {
 		title = strings.TrimPrefix(title, prefix)
 	}
+	title = reLevelSuffix.ReplaceAllString(title, "")
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return "untitled"

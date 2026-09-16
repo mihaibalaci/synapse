@@ -21,6 +21,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - New chunk types `conversation_summary` and `topic_summary` alongside `summary`; all are searchable.
 - Run results report `conversationsCompacted`, `sessionsCompacted`, and `topicsCompacted`.
 
+### Fixed
+- Ollama compaction calls ignored effort routing: no `num_predict` or `temperature` was sent, so the model generated until it chose to stop and reliably outran the request timeout on self-hosted CPU inference. Effort settings are now passed as Ollama options.
+- The LLM request timeout was hardcoded at 120s. It is now `COMPACTION_LLM_TIMEOUT_SECONDS` (default 120), because self-hosted CPU inference is far slower than a hosted API.
+- `COMPACTION_MIN_AGE_DAYS=0` and `COMPACTION_TOPIC_MIN_AGE_DAYS=0` silently fell back to the defaults, so freshly captured data could never be compacted. An explicit `0` now removes the age gate, while a bare `Config{}` still gets the conservative 14-day default.
+- Topic summary titles inherited the batch count from the summary that seeded them, producing `Topic summary: abc (2 batches) (13 conversations)`.
+
 ### Changed
 - SDK `SessionTracker` flush threshold now defaults to 4 messages (was 10), floored at the 2-message API minimum.
 - Compaction organization filtering moved into SQL, so a busy organization can no longer consume the per-run limit ahead of the requested one.

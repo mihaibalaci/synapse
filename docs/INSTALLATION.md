@@ -65,14 +65,27 @@ conversations covering the same topic.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `COMPACTION_INTERVAL_HOURS` | 6 | Worker compaction interval |
-| `COMPACTION_MIN_AGE_DAYS` | 14 | Age of the newest batch before a conversation or session is eligible |
+| `COMPACTION_MIN_AGE_DAYS` | 14 | Age of the newest batch before a conversation or session is eligible. `0` removes the age gate entirely |
 | `COMPACTION_MAX_PER_RUN` | 100 | Conversations plus standalone sessions per run |
 | `COMPACTION_ORGANIZATIONS` | all | `all`, or a single organization id (no lists) |
 | `COMPACTION_TOPIC_ENABLED` | true | Merge summaries across conversations |
-| `COMPACTION_TOPIC_MIN_AGE_DAYS` | 2× min age | How long conversation summaries stay standalone first |
+| `COMPACTION_TOPIC_MIN_AGE_DAYS` | 2× min age | How long conversation summaries stay standalone first. `0` removes the gate |
 | `COMPACTION_TOPIC_SIMILARITY` | 0.82 | Cosine similarity for "same topic" (0–1) |
 | `COMPACTION_TOPIC_MIN_CONVERSATIONS` | 2 | Distinct conversations required per topic merge |
 | `COMPACTION_MAX_CLUSTERS` | 50 | Topic merges per run |
+| `COMPACTION_LLM_TIMEOUT_SECONDS` | 120 | Per-summary LLM request timeout. Raise it for self-hosted CPU inference, which is far slower than a hosted API |
+
+Self-hosted inference is the usual reason compaction reports errors without
+writing anything. Summarization happens before the database transaction opens, so
+a timeout leaves the originals untouched and the group is retried next run. Verify
+your model can produce a ~500 word summary inside the timeout:
+
+```bash
+time curl -s http://127.0.0.1:11434/api/chat -d '{
+  "model":"'"$LLM_MODEL"'","stream":false,
+  "options":{"num_predict":512},
+  "messages":[{"role":"user","content":"Summarize: we chose X then revised to Y."}]}' | head -c 200
+```
 
 ## OIDC Configuration (optional)
 
